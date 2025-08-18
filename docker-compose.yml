@@ -1,0 +1,51 @@
+version: '3.8'
+
+# 定義所有服務
+services:
+
+  # 1. 後端 FastAPI 服務
+  backend:
+    # build 指令會告訴 Docker Compose 去哪裡找 Dockerfile 來建置映像檔
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    # ports 會將容器的 8000 port 映射到您本機的 8000 port
+    # 讓您可以透過 http://localhost:8000 訪問 API
+    ports:
+      - "8000:8000"
+    # volumes 會將您本地的 backend 資料夾同步到容器的 /app 資料夾
+    # 這讓您在本地修改程式碼時，容器內的服務會自動重載，實現熱更新
+    volumes:
+      - ./backend:/app
+    # env_file 可以讓您從 .env 檔案讀取環境變數，避免敏感資訊寫死
+    # 您的後端程式碼需要修改，才能從環境變數讀取資料庫連線資訊
+    env_file:
+      - ./.env
+    # depends_on 確保後端服務會在資料庫和 Redis 啟動之後才啟動
+    depends_on:
+      - db
+      - redis
+
+  # 2. PostgreSQL 資料庫服務
+  db:
+    # 直接使用官方的 PostgreSQL 15 映像檔
+    image: postgres:15
+    # 同樣從 .env 檔案讀取資料庫的設定
+    env_file:
+      - ./.env
+    # volumes 會建立一個名為 postgres_data 的持久化儲存空間
+    # 確保您的資料庫資料在容器關閉後不會遺失
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # 將資料庫的 5432 port 映射到本機，方便使用資料庫工具連線 (可選)
+    ports:
+      - "5432:5432"
+
+  # 3. Redis 快取服務
+  redis:
+    # 直接使用官方的 Redis 7 映像檔
+    image: redis:7
+
+# 定義 Docker 的具名磁碟區 (Named Volumes)
+volumes:
+  postgres_data:
