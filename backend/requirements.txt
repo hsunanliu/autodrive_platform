@@ -1,9 +1,56 @@
-fastapi
-uvicorn[standard]
+# backend/requirements.txt
+# Web 框架
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
 
-# Database
-sqlalchemy
-psycopg2-binary
+# 數據庫相關
+sqlalchemy==2.0.23
+asyncpg==0.29.0
+alembic==1.12.1
 
-# Cache
-redis
+# 數據驗證
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# 快取
+redis==5.0.1
+
+# 安全認證
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+
+# 配置管理
+python-dotenv==1.0.0
+
+# IOTA 區塊鏈 SDK
+iota-sdk==1.1.4
+# 注意：這是 beta 版本，根據官方文檔可能需要調整版本號
+
+# HTTP 客戶端
+httpx==0.25.2
+aiohttp==3.9.1
+
+# 密碼學工具
+cryptography==41.0.7
+
+# 日期時間處理
+python-dateutil==2.8.2
+
+# JSON 處理
+orjson==3.9.10
+
+# 測試工具
+pytest==7.4.3
+pytest-asyncio==0.21.1
+
+# 開發工具
+black==23.11.0
+isort==5.12.0
+flake8==6.1.0
+
+# 類型檢查
+mypy==1.7.1
+
+# 環境變量驗證
+pydantic-settings==2.1.0

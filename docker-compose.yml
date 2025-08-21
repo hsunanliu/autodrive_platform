@@ -1,4 +1,3 @@
-version: '3.8'
 
 # 定義所有服務
 services:
@@ -9,6 +8,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    platform: linux/amd64  
     # ports 會將容器的 8000 port 映射到您本機的 8000 port
     # 讓您可以透過 http://localhost:8000 訪問 API
     ports:
@@ -30,6 +30,7 @@ services:
   db:
     # 直接使用官方的 PostgreSQL 15 映像檔
     image: postgres:15
+    platform: linux/amd64
     # 同樣從 .env 檔案讀取資料庫的設定
     env_file:
       - ./.env
@@ -45,6 +46,9 @@ services:
   redis:
     # 直接使用官方的 Redis 7 映像檔
     image: redis:7
+    platform: linux/amd64
+    ports:
+      - "6379:6379"  # 將 Redis 的 6379 port 映射到本機
 
 # 定義 Docker 的具名磁碟區 (Named Volumes)
 volumes:

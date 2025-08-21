@@ -1,0 +1,17 @@
+[package]
+name        = "decentralized_ride"
+version     = "0.1.0"
+edition     = "2024"
+license     = "Apache-2.0"
+authors     = ["AutoDrive Team"]
+
+[dependencies]
+
+
+[addresses]
+decentralized_ride = "0x0"
+iota          = "0x2"
+std           = "0x1"
+admin         = "0x0000000000000001"
+alice         = "0x0000000000000002"
+bob           = "0x0000000000000003"
