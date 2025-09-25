@@ -15,7 +15,7 @@ VALID_USER_DATA = {
 
 VALID_DRIVER_DATA = {
     "username": "driver_bob",
-    "wallet_address": "0x742d35cc8686c6ebb13c6b3dc4f3c7e6a6fd9ff3abc123def456789abcdef1234",
+    "wallet_address": "0x742d35cc8686c6ebb13c6b3dc4f3c7e6a6fd9ff3abc123def456789abcdef123",
     "email": "bob@example.com", 
     "password": "DriverPass456#",
     "phone_number": "0987654321",
@@ -63,8 +63,8 @@ INVALID_USER_DATA = [
 TEST_WALLET_ADDRESSES = {
     "valid": [
         "0x9bdeefc53afba9fca554dc61025514e21fb4e9f9281ad4449bca86f72f18dd5f",
-        "0x742d35cc8686c6ebb13c6b3dc4f3c7e6a6fd9ff3abc123def456789abcdef1234",
-        "0x123abc456def789012345678901234567890abcdef123456789abcdef0123456789"
+        "0x742d35cc8686c6ebb13c6b3dc4f3c7e6a6fd9ff3abc123def456789abcdef123",
+        "0x123abc456def789012345678901234567890abcdef123456789abcdef0123456"
     ],
     "invalid": [
         "invalid_address",

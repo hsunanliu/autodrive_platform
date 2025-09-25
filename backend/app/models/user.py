@@ -5,7 +5,8 @@ User 資料庫模型
 """
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, CheckConstraint, Text
 from sqlalchemy.sql import func
-from app.core.database import Base
+from .base import Base
+from sqlalchemy.orm import relationship
 
 
 class User(Base):
@@ -18,6 +19,7 @@ class User(Base):
     3. 業務邏輯：角色管理、信譽分數、統計數據
     """
     __tablename__ = "users"
+    #__table_args__ = {"extend_existing": True}  # ✅ 允許重複定義
     
     # === 主鍵 ===
     id = Column(Integer, primary_key=True, index=True, comment="用戶 ID（自動遞增）")
@@ -258,3 +260,10 @@ class User(Base):
     def can_request_ride(self) -> bool:
         """是否可以叫車"""
         return self.is_passenger and self.is_active
+# === 關聯關係 ===
+vehicles = relationship("Vehicle", back_populates="owner")
+trips_as_passenger = relationship("Trip", foreign_keys="Trip.user_id", back_populates="passenger")
+trips_as_driver = relationship("Trip", foreign_keys="Trip.driver_id", back_populates="driver")
+reviews_given = relationship("Review", foreign_keys="Review.reviewer_id", back_populates="reviewer")
+reviews_received = relationship("Review", foreign_keys="Review.reviewee_id", back_populates="reviewee")
+payment_methods = relationship("PaymentMethod", back_populates="user")

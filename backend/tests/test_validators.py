@@ -3,6 +3,7 @@
 測試所有驗證器函數
 """
 import pytest
+import re
 from app.utils.validators import (
     password_strength_ok,
     phone_number_ok,

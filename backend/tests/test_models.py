@@ -12,15 +12,15 @@ class TestUserModel:
     """測試 User 模型"""
     
     @pytest.mark.asyncio
-    async def test_user_creation(self, async_db_session):
+    async def test_user_creation(self, db_session):
         """測試用戶創建"""
-        async with async_db_session() as db_session:
-            user = User(
-                username="test_user",
-                wallet_address="0x9bdeefc53afba9fca554dc61025514e21fb4e9f9281ad4449bca86f72f18dd5f",
-                email="test@example.com",
-                user_type="passenger"
-            )
+        
+        user = User(
+            username="test_user",
+            wallet_address="0x9bdeefc53afba9fca554dc61025514e21fb4e9f9281ad4449bca86f72f18dd",
+            email="test@example.com",
+            user_type="passenger"
+        )
         
         db_session.add(user)
         await db_session.commit()
@@ -38,7 +38,7 @@ class TestUserModel:
         # 創建第一個用戶
         user1 = User(
             username="unique_user",
-            wallet_address="0x742d35cc8686c6ebb13c6b3dc4f3c7e6a6fd9ff3abc123def456789abcdef1234",
+            wallet_address="0x9bdeefc53afba9fca554dc61025514e21fb4e9f9281ad4449bca86f72f18dd5f",
             email="unique@example.com"
         )
         
@@ -48,7 +48,7 @@ class TestUserModel:
         # 嘗試創建相同用戶名的用戶
         user2 = User(
             username="unique_user",  # 重複用戶名
-            wallet_address="0x123abc456def789012345678901234567890abcdef123456789abcdef012345",
+            wallet_address="0x9bdeefc53afba9fca554dc61025514e21fb4e9f9281ad4449bca86f72f18dd5f",
             email="different@example.com"
         )
         

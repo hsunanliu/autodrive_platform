@@ -1,19 +1,75 @@
-# Environment variables
+# ----------------------------------------
+# 環境變數
+# ----------------------------------------
 .env
+.env.*               # 避免任何以 .env 開頭的檔案
 
+# ----------------------------------------
+# 作業系統
+# ----------------------------------------
+.DS_Store
+Thumbs.db
+
+# ----------------------------------------
 # Python
+# ----------------------------------------
 __pycache__/
+*.py[cod]
+*.pyo
+*.pyd
 venv/
-*.pyc
+env/
+.venv/
 
-# IDEs and editors
+# ----------------------------------------
+# Alembic / SQLAlchemy
+# ----------------------------------------
+alembic.ini          # 如有自訂配置，視情況保留 .example
+alembic/versions/*   # 若需要版本控制，可排除此行
+
+# ----------------------------------------
+# Docker
+# ----------------------------------------
+docker-compose.override.yml
+*.log
+docker-compose.*.yml
+
+# ----------------------------------------
+# Node / JavaScript
+# ----------------------------------------
+node_modules/
+dist/
+build/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+.pnpm-debug.log*
+
+# ----------------------------------------
+# React / Vite
+# ----------------------------------------
+.vite/
 .idea/
 .vscode/
+*.local
+coverage/
 
-# macOS
-.DS_Store
-
-# Node.js (for dashboard)
-node_modules/
+# ----------------------------------------
+# Flutter / Dart
+# ----------------------------------------
+.dart_tool/
+.packages
+.pub-cache/
 build/
-.npm/
+flutter_export_environment.sh
+
+# ----------------------------------------
+# IDE / 編輯器
+# ----------------------------------------
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

@@ -1,0 +1,19 @@
+# backend/app/models/__init__.py
+
+from .base import Base
+from .user import User
+from .vehicle import Vehicle
+from .trip import Trip
+from .review import Review
+from .payment import PaymentMethod, PaymentTransaction
+
+# 確保所有模型都被導入，這樣 Base.metadata 才能找到它們
+__all__ = [
+    "Base", 
+    "User", 
+    "Vehicle", 
+    "Trip", 
+    "Review", 
+    "PaymentMethod", 
+    "PaymentTransaction"
+]

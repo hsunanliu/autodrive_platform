@@ -38,6 +38,7 @@ services:
     # 確保您的資料庫資料在容器關閉後不會遺失
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./backend/docker/init-test-db.sh:/docker-entrypoint-initdb.d/init-test-db.sh  # 初始化測試資料庫腳本
     # 將資料庫的 5432 port 映射到本機，方便使用資料庫工具連線 (可選)
     ports:
       - "5432:5432"

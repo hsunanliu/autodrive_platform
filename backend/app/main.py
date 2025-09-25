@@ -3,6 +3,7 @@ from typing import Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from app.services.iota_service import get_iota_service
+from app.api.v1 import vehicles, trips, reviews
 
 app = FastAPI(
     title="AutoDrive API",
@@ -17,6 +18,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 註冊新的路由
+app.include_router(vehicles.router)
+app.include_router(trips.router) 
+app.include_router(reviews.router)
 
 @app.get("/")
 async def root():
