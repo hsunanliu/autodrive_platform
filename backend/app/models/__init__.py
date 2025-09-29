@@ -1,9 +1,9 @@
 # backend/app/models/__init__.py
 
-from .base import Base
+from app.core.database import Base
 from .user import User
 from .vehicle import Vehicle
-from .trip import Trip
+from .ride import Trip
 from .review import Review
 from .payment import PaymentMethod, PaymentTransaction
 

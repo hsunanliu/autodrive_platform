@@ -8,7 +8,7 @@ Trip 資料庫模型
 from sqlalchemy import Column, Integer, String, Float, DateTime, CheckConstraint, ForeignKey, Text
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from .base import Base
+from app.core.database import Base
 
 class Trip(Base):
     """
@@ -210,10 +210,10 @@ class Trip(Base):
     )
     
     # === 關聯關係 ===
-    passenger = relationship("User", foreign_keys=[user_id], back_populates="trips_as_passenger")
-    driver = relationship("User", foreign_keys=[driver_id], back_populates="trips_as_driver")
-    vehicle = relationship("Vehicle", back_populates="trips_as_vehicle")
-    reviews = relationship("Review", back_populates="trip")
+    passenger = relationship("User", foreign_keys=[user_id])
+    driver = relationship("User", foreign_keys=[driver_id])
+    vehicle = relationship("Vehicle")
+    reviews = relationship("Review")
     
     # === 約束條件 ===
     __table_args__ = (

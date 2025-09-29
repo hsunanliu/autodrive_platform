@@ -5,10 +5,10 @@ Review 資料庫模型
 管理行程評價與評論系統
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, CheckConstraint, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, CheckConstraint, ForeignKey, Text, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from .base import Base
+from app.core.database import Base
 
 class Review(Base):
     """
@@ -98,9 +98,9 @@ class Review(Base):
     )
     
     # === 關聯關係 ===
-    trip = relationship("Trip", back_populates="reviews")
-    reviewer = relationship("User", foreign_keys=[reviewer_id], back_populates="reviews_given")
-    reviewee = relationship("User", foreign_keys=[reviewee_id], back_populates="reviews_received")
+    trip = relationship("Trip")
+    reviewer = relationship("User", foreign_keys=[reviewer_id])
+    reviewee = relationship("User", foreign_keys=[reviewee_id])
     
     # === 約束條件 ===
     __table_args__ = (

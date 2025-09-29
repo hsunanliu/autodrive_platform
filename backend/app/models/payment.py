@@ -8,7 +8,7 @@ Payment 相關資料庫模型
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, CheckConstraint, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from .base import Base
+from app.core.database import Base
 
 class PaymentMethod(Base):
     """
@@ -82,7 +82,7 @@ class PaymentMethod(Base):
     )
     
     # === 關聯關係 ===
-    user = relationship("User", back_populates="payment_methods")
+    user = relationship("User")
     
     # === 約束條件 ===
     __table_args__ = (

@@ -11,6 +11,7 @@ alembic==1.12.1
 # 數據驗證
 pydantic==2.5.0
 pydantic-settings==2.1.0
+email-validator==2.1.0
 
 # 快取
 redis==5.0.1

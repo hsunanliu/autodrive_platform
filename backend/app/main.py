@@ -1,83 +1,57 @@
-# backend/app/main.py（完整測試版）
-from typing import Dict, Any
-from fastapi import FastAPI, HTTPException
+# backend/app/main.py
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.services.iota_service import get_iota_service
-from app.api.v1 import vehicles, trips, reviews
+from contextlib import asynccontextmanager
+import logging
+
+# 設置日誌
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """應用生命週期管理"""
+    logger.info("🚀 Starting AutoDrive API...")
+    # 啟動時的初始化
+    yield
+    # 關閉時的清理
+    logger.info("👋 Shutting down AutoDrive API...")
 
 app = FastAPI(
     title="AutoDrive API",
-    description="去中心化自動駕駛服務平台",
-    version="1.0.0"
+    description="去中心化叫車平台 API",
+    version="1.0.0",
+    lifespan=lifespan
 )
 
+# CORS 設置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # 生產環境要改
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# 註冊新的路由
-app.include_router(vehicles.router)
-app.include_router(trips.router) 
-app.include_router(reviews.router)
 
 @app.get("/")
 async def root():
     return {
-        "message": "AutoDrive API is running!",
-        "status": "OK",
-        "version": "1.0.0"
+        "message": "🚗 AutoDrive API is running!",
+        "status": "healthy",
+        "docs": "/docs"
     }
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
-
-@app.get("/iota/network-info")
-async def get_iota_network_info():
-    """測試 IOTA 網路連接"""
-    iota_service = get_iota_service()
-    return await iota_service.get_network_info()
-
-@app.get("/iota/registry-stats")
-async def get_registry_statistics():
-    """獲取你之前測試的真實智能合約數據"""
-    iota_service = get_iota_service()
-    return await iota_service.get_all_registry_stats()
-
-@app.get("/iota/object/{object_id}")
-async def get_blockchain_object(object_id: str):
-    """查詢任意鏈上對象"""
-    iota_service = get_iota_service()
-    result = await iota_service.get_object(object_id)
-    if result:
-        return {"status": "success", "object": result}
-    else:
-        raise HTTPException(status_code=404, detail="Object not found")
-
-@app.get("/demo/blockchain-proof")
-async def demo_blockchain_integration():
-    """Demo 專用：證明區塊鏈整合的端點"""
-    iota_service = get_iota_service()
-    
-    # 獲取網路信息
-    network = await iota_service.get_network_info()
-    
-    # 獲取智能合約統計
-    stats = await iota_service.get_all_registry_stats()
-    
+    """健康檢查端點"""
     return {
-        "demo_title": "AutoDrive 區塊鏈整合證明",
-        "blockchain_network": network,
-        "smart_contracts": stats,
-        "proof_points": [
-            "✅ 真實 IOTA 網路連接",
-            "✅ 智能合約已部署並運行",
-            f"✅ {stats.get('data', {}).get('user_registry', {}).get('total_users', 0)} 個用戶已註冊", 
-            f"✅ {stats.get('data', {}).get('vehicle_registry', {}).get('total_vehicles', 0)} 輛車已註冊",
-            f"✅ {stats.get('data', {}).get('matching_service', {}).get('total_matches', 0)} 次成功配對"
-        ],
-        "message": "這是真實的區塊鏈數據，不是模擬！"
+        "status": "healthy",
+        "services": {
+            "api": "running",
+            "database": "pending",  # 稍後實作
+            "redis": "pending",     # 稍後實作
+            "blockchain": "pending" # 稍後實作
+        }
     }
+from app.api.v1 import users as users_v1
+app.include_router(users_v1.router, prefix="/api/v1")    

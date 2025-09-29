@@ -8,7 +8,7 @@ Vehicle 資料庫模型
 from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, CheckConstraint, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from .base import Base
+from app.core.database import Base
 
 class Vehicle(Base):
     """
@@ -155,8 +155,8 @@ class Vehicle(Base):
     )
     
     # === 關聯關係 ===
-    owner = relationship("User", back_populates="vehicles")
-    trips_as_vehicle = relationship("Trip", back_populates="vehicle")
+    owner = relationship("User")
+    trips_as_vehicle = relationship("Trip")
     
     # === 約束條件 ===
     __table_args__ = (

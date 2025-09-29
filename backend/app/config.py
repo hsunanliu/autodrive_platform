@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"
     
     # 數據庫配置
-    DATABASE_URL: str = "postgresql+asyncpg://autodrive:password@db:5432/autodrive_dev"
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://autodrive:autodrive2025@db:5432/autodrive_dev")
     
     # Redis 配置
     REDIS_URL: str = "redis://redis:6379"
