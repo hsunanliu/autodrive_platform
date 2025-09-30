@@ -218,7 +218,7 @@ class Trip(Base):
     # === 約束條件 ===
     __table_args__ = (
         CheckConstraint(
-            "status IN ('requested', 'matched', 'picked_up', 'in_progress', 'completed', 'cancelled')",
+            "status IN ('requested', 'matched', 'accepted', 'picked_up', 'in_progress', 'completed', 'cancelled')",
             name='valid_trip_status'
         ),
         CheckConstraint(

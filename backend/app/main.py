@@ -54,4 +54,9 @@ async def health_check():
         }
     }
 from app.api.v1 import users as users_v1
-app.include_router(users_v1.router, prefix="/api/v1")    
+from app.api.v1 import vehicles as vehicles_v1
+from app.api.v1 import trips as trips_v1
+
+app.include_router(users_v1.router, prefix="/api/v1")
+app.include_router(vehicles_v1.router, prefix="/api/v1")
+app.include_router(trips_v1.router, prefix="/api/v1")    

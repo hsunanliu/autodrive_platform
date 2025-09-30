@@ -7,11 +7,14 @@
 
 from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from typing import List, Optional
 import time
 import math
 import random
+import logging
+
+logger = logging.getLogger(__name__)
 
 from app.core.database import get_async_session
 from app.models.vehicle import Vehicle
@@ -19,8 +22,9 @@ from app.models.user import User
 from app.schemas.vehicle import VehicleResponse, VehicleCreate, VehicleUpdate, VehicleLocationUpdate
 from app.api.deps import get_current_user
 from app.services.location_service import LocationService
+from app.services.contract_service import contract_service
 
-router = APIRouter(prefix="/api/vehicles", tags=["vehicles"])
+router = APIRouter(prefix="/vehicles", tags=["vehicles"])
 
 @router.get("/available", response_model=List[VehicleResponse])
 async def get_available_vehicles(
@@ -59,25 +63,37 @@ async def get_available_vehicles(
         # 計算距離
         distance_km = LocationService.haversine_km(lat, lng, rand_lat, rand_lng)
         
-        vehicle_data = {
-            "vehicle_id": vehicle.vehicle_id,
-            "owner_id": vehicle.owner_id,
-            "plate_number": vehicle.plate_number,
-            "model": vehicle.model,
-            "vehicle_type": vehicle.vehicle_type,
-            "battery_capacity_kwh": vehicle.battery_capacity_kwh,
-            "current_charge_percent": vehicle.current_charge_percent,
-            "location_lat": rand_lat,  # 隨機生成的位置
-            "location_lng": rand_lng,
-            "status": vehicle.status,
-            "hourly_rate": vehicle.hourly_rate,
-            "distance_km": round(distance_km, 2),
-            "estimated_arrival_minutes": max(3, int(distance_km * 2))  # 估算到達時間
-        }
-        vehicle_list.append(vehicle_data)
+        # 創建 VehicleResponse 對象，包含所有必要欄位
+        vehicle_response = VehicleResponse(
+            vehicle_id=vehicle.vehicle_id,
+            owner_id=vehicle.owner_id,
+            plate_number=vehicle.plate_number,
+            model=vehicle.model,
+            vehicle_type=vehicle.vehicle_type,
+            battery_capacity_kwh=vehicle.battery_capacity_kwh,
+            current_charge_percent=vehicle.current_charge_percent,
+            current_lat=vehicle.current_lat,
+            current_lng=vehicle.current_lng,
+            status=vehicle.status,
+            is_active=vehicle.is_active,
+            blockchain_object_id=vehicle.blockchain_object_id,
+            hourly_rate=vehicle.hourly_rate,
+            total_trips=vehicle.total_trips,
+            total_distance_km=vehicle.total_distance_km,
+            total_earnings_micro_iota=vehicle.total_earnings_micro_iota,
+            created_at=vehicle.created_at,
+            updated_at=vehicle.updated_at,
+            last_active_at=vehicle.last_active_at,
+            # 計算欄位
+            location_lat=rand_lat,  # 隨機生成的位置
+            location_lng=rand_lng,
+            distance_km=round(distance_km, 2),
+            estimated_arrival_minutes=max(3, int(distance_km * 2))  # 估算到達時間
+        )
+        vehicle_list.append(vehicle_response)
     
     # 按距離排序
-    vehicle_list.sort(key=lambda x: x["distance_km"])
+    vehicle_list.sort(key=lambda x: x.distance_km)
     
     return vehicle_list
 
@@ -121,6 +137,29 @@ async def register_vehicle(
     session.add(vehicle)
     await session.commit()
     await session.refresh(vehicle)
+    
+    # 在智能合約中註冊車輛
+    try:
+        contract_result = await contract_service.register_vehicle_on_chain(
+            owner_address=current_user.wallet_address,
+            vehicle_data={
+                "vehicle_id": vehicle.vehicle_id,
+                "vehicle_type": vehicle.vehicle_type,
+                "hourly_rate": vehicle.hourly_rate
+            }
+        )
+        
+        if contract_result.get("success"):
+            # 更新車輛的區塊鏈對象ID
+            vehicle.blockchain_object_id = contract_result.get("object_id")
+            await session.commit()
+            logger.info(f"✅ Vehicle registered on blockchain: {contract_result['transaction_hash']}")
+        else:
+            logger.warning(f"⚠️ Vehicle blockchain registration failed: {contract_result.get('error')}")
+            
+    except Exception as e:
+        logger.error(f"❌ Vehicle blockchain registration error: {e}")
+        # 不影響車輛創建
     
     return vehicle
 

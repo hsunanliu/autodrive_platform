@@ -1,256 +1,325 @@
 # backend/app/api/v1/trips.py
-
 """
 行程管理 API
-完整的叫車和行程生命週期管理
+處理叫車、配對、行程狀態管理等功能
 """
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, desc
 from typing import List, Optional
-from datetime import datetime
 
 from app.core.database import get_async_session
-from app.models.trip import Trip
-from app.models.vehicle import Vehicle
+from app.api.deps import get_current_user, require_passenger_role, require_driver_role
 from app.models.user import User
-from app.schemas.trip import TripResponse, TripCreate, TripStatusUpdate, StartTripRequest
-from app.api.deps import get_current_user
-from app.services.location_service import LocationService
-from app.services.pricing_service import PricingService
+from app.services.trip_service import TripService
+from app.services.iota_service import iota_service
+from app.schemas.trip import (
+    TripCreate, TripResponse, TripEstimate, TripCancelRequest,
+    TripAcceptRequest, DriverTripInfo, TripSummary
+)
+from app.schemas.payment import WalletBalance, TransactionStatus
 
-router = APIRouter(prefix="/api/trips", tags=["trips"])
+router = APIRouter(prefix="/trips", tags=["trips"])
 
-@router.post("/start", response_model=TripResponse)
-async def start_trip(
-    trip_data: StartTripRequest,
-    session: AsyncSession = Depends(get_async_session),
-    current_user: User = Depends(get_current_user)
+@router.post("/estimate", response_model=TripEstimate)
+async def get_trip_estimate(
+    pickup_lat: float = Query(..., description="上車點緯度"),
+    pickup_lng: float = Query(..., description="上車點經度"),
+    dropoff_lat: float = Query(..., description="下車點緯度"),
+    dropoff_lng: float = Query(..., description="下車點經度"),
+    db: AsyncSession = Depends(get_async_session)
 ):
     """
-    發起叫車請求（複用隊友邏輯）
-    若未帶 distance/fare，後端自動計算
+    獲取行程預估 (費用、時間、可用車輛)
     """
-    
-    # 計算距離和費用（複用隊友邏輯）
-    distance_km = trip_data.distance_km
-    if distance_km is None:
-        distance_km = LocationService.haversine_km(
-            trip_data.pickup_lat, trip_data.pickup_lng,
-            trip_data.dropoff_lat, trip_data.dropoff_lng
+    service = TripService(db)
+    try:
+        estimate = await service.get_trip_estimate(pickup_lat, pickup_lng, dropoff_lat, dropoff_lng)
+        return estimate
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"預估計算失敗: {str(e)}"
         )
-        distance_km = round(distance_km, 2)
-    
-    fare = trip_data.fare
-    if fare is None:
-        fare = PricingService.calculate_fare(distance_km)
-    
-    # 檢查車輛可用性
-    if trip_data.vehicle_id:
-        result = await session.execute(
-            select(Vehicle).where(
-                and_(
-                    Vehicle.vehicle_id == trip_data.vehicle_id,
-                    Vehicle.status == "available"
-                )
-            )
-        )
-        vehicle = result.scalar_one_or_none()
-        if not vehicle:
-            raise HTTPException(status_code=400, detail="車輛不可用")
-    
-    # 創建行程
-    trip = Trip(
-        user_id=current_user.id,
-        vehicle_id=trip_data.vehicle_id,
-        pickup_lat=trip_data.pickup_lat,
-        pickup_lng=trip_data.pickup_lng,
-        pickup_address=trip_data.pickup_address,
-        dropoff_lat=trip_data.dropoff_lat,
-        dropoff_lng=trip_data.dropoff_lng,
-        dropoff_address=trip_data.dropoff_address,
-        distance_km=distance_km,
-        fare=fare,
-        passenger_count=trip_data.passenger_count,
-        status="matched" if trip_data.vehicle_id else "requested"
-    )
-    
-    session.add(trip)
-    
-    # 如果有指定車輛，更新車輛狀態
-    if trip_data.vehicle_id:
-        vehicle.status = "on_trip"
-    
-    await session.commit()
-    await session.refresh(trip)
-    
-    return trip
 
-@router.post("/record", response_model=dict)
-async def record_trip(
+@router.post("/", response_model=TripResponse)
+async def create_trip_request(
     trip_data: TripCreate,
-    session: AsyncSession = Depends(get_async_session),
-    current_user: User = Depends(get_current_user)
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_passenger_role)
 ):
     """
-    記錄完成的行程（複用隊友邏輯）
-    寫入行程；若未帶 distance/fare，後端自動計算
+    創建叫車請求 (乘客端)
     """
-    
-    # 自動計算距離和費用
-    distance_km = trip_data.distance_km
-    if distance_km is None:
-        distance_km = LocationService.haversine_km(
-            trip_data.pickup_lat, trip_data.pickup_lng,
-            trip_data.dropoff_lat, trip_data.dropoff_lng
+    service = TripService(db)
+    try:
+        trip = await service.create_trip_request(current_user.id, trip_data)
+        
+        # 自動觸發配對 (異步)
+        try:
+            match_result = await service.find_and_match_driver(trip.trip_id)
+            if match_result:
+                # 這裡可以發送推送通知給司機
+                pass
+        except Exception as e:
+            # 配對失敗不影響行程創建
+            pass
+        
+        return trip
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
         )
-        distance_km = round(distance_km, 2)
-    
-    fare = trip_data.fare
-    if fare is None:
-        fare = PricingService.calculate_fare(distance_km)
-    
-    # 創建已完成的行程記錄
-    trip = Trip(
-        user_id=current_user.id,
-        vehicle_id=trip_data.vehicle_id,
-        pickup_lat=trip_data.pickup_lat,
-        pickup_lng=trip_data.pickup_lng,
-        dropoff_lat=trip_data.dropoff_lat,
-        dropoff_lng=trip_data.dropoff_lng,
-        distance_km=distance_km,
-        fare=fare,
-        status="completed",
-        picked_up_at=func.now(),
-        dropped_off_at=func.now(),
-        completed_at=func.now()
-    )
-    
-    session.add(trip)
-    
-    # 將車輛標回可用
-    if trip_data.vehicle_id:
-        result = await session.execute(
-            select(Vehicle).where(Vehicle.vehicle_id == trip_data.vehicle_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"創建行程失敗: {str(e)}"
         )
-        vehicle = result.scalar_one_or_none()
-        if vehicle:
-            vehicle.status = "available"
-            vehicle.total_trips += 1
-            vehicle.total_distance_km += distance_km
-    
-    await session.commit()
-    
-    return {
-        "success": True,
-        "distance_km": distance_km,
-        "fare": fare
-    }
 
-@router.get("/", response_model=List[TripResponse])
-async def get_my_trips(
-    limit: int = Query(50, description="最大返回數量"),
-    offset: int = Query(0, description="偏移量"),
-    session: AsyncSession = Depends(get_async_session),
-    current_user: User = Depends(get_current_user)
-):
-    """取得我的行程歷史"""
-    
-    result = await session.execute(
-        select(Trip)
-        .where(Trip.user_id == current_user.id)
-        .order_by(desc(Trip.requested_at))
-        .limit(limit)
-        .offset(offset)
-    )
-    trips = result.scalars().all()
-    
-    return trips
-
-@router.get("/latest", response_model=Optional[TripResponse])
-async def get_latest_trip(
-    session: AsyncSession = Depends(get_async_session),
-    current_user: User = Depends(get_current_user)
-):
-    """取得最新的行程"""
-    
-    result = await session.execute(
-        select(Trip)
-        .where(Trip.user_id == current_user.id)
-        .order_by(desc(Trip.requested_at))
-        .limit(1)
-    )
-    trip = result.scalar_one_or_none()
-    
-    return trip
-
-@router.get("/active", response_model=List[TripResponse])
-async def get_active_trips(
-    session: AsyncSession = Depends(get_async_session),
-    current_user: User = Depends(get_current_user)
-):
-    """取得進行中的行程"""
-    
-    result = await session.execute(
-        select(Trip).where(
-            and_(
-                Trip.user_id == current_user.id,
-                Trip.status.in_(["requested", "matched", "picked_up", "in_progress"])
-            )
-        )
-    )
-    trips = result.scalars().all()
-    
-    return trips
-
-@router.put("/{trip_id}/status")
-async def update_trip_status(
+@router.post("/{trip_id}/match", response_model=Optional[DriverTripInfo])
+async def match_driver(
     trip_id: int,
-    status_update: TripStatusUpdate,
-    session: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user)
 ):
-    """更新行程狀態"""
-    
-    result = await session.execute(
-        select(Trip).where(Trip.trip_id == trip_id)
-    )
-    trip = result.scalar_one_or_none()
-    if not trip:
-        raise HTTPException(status_code=404, detail="行程不存在")
-    
-    # 檢查權限（乘客或司機都可以更新）
-    if trip.user_id != current_user.id and trip.driver_id != current_user.id:
-        raise HTTPException(status_code=403, detail="無權限更新此行程")
-    
-    # 更新狀態
-    trip.update_status(status_update.status)
-    
-    if status_update.cancellation_reason:
-        trip.cancellation_reason = status_update.cancellation_reason
-    
-    await session.commit()
-    
-    return {"success": True, "status": trip.status}
+    """
+    手動觸發司機配對 (管理員或乘客)
+    """
+    service = TripService(db)
+    try:
+        match_result = await service.find_and_match_driver(trip_id)
+        return match_result
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"配對失敗: {str(e)}"
+        )
+
+@router.post("/{trip_id}/accept", response_model=TripResponse)
+async def accept_trip(
+    trip_id: int,
+    accept_data: TripAcceptRequest,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_driver_role)
+):
+    """
+    司機接受行程
+    """
+    service = TripService(db)
+    try:
+        trip = await service.accept_trip(trip_id, current_user.id, accept_data.estimated_arrival_minutes)
+        return trip
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"接受行程失敗: {str(e)}"
+        )
+
+@router.put("/{trip_id}/pickup", response_model=TripResponse)
+async def pickup_passenger(
+    trip_id: int,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_driver_role)
+):
+    """
+    確認乘客上車
+    """
+    service = TripService(db)
+    try:
+        trip = await service.pickup_passenger(trip_id, current_user.id)
+        return trip
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"確認上車失敗: {str(e)}"
+        )
+
+@router.put("/{trip_id}/complete")
+async def complete_trip(
+    trip_id: int,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_driver_role)
+):
+    """
+    完成行程並處理支付
+    """
+    service = TripService(db)
+    try:
+        result = await service.complete_trip(trip_id, current_user.id)
+        return {
+            "success": True,
+            "message": "行程完成並已處理支付",
+            "trip": result["trip"],
+            "payment": result["payment"]
+        }
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"完成行程失敗: {str(e)}"
+        )
+
+@router.put("/{trip_id}/cancel", response_model=TripResponse)
+async def cancel_trip(
+    trip_id: int,
+    cancel_data: TripCancelRequest,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    取消行程
+    """
+    service = TripService(db)
+    try:
+        trip = await service.cancel_trip(
+            trip_id, current_user.id, cancel_data.reason, cancel_data.cancelled_by
+        )
+        return trip
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"取消行程失敗: {str(e)}"
+        )
 
 @router.get("/{trip_id}", response_model=TripResponse)
 async def get_trip_details(
     trip_id: int,
-    session: AsyncSession = Depends(get_async_session),
+    db: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user)
 ):
-    """取得行程詳細資訊"""
+    """
+    獲取行程詳情
+    """
+    service = TripService(db)
+    try:
+        trip = await service._get_trip_by_id(trip_id)
+        if not trip:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="行程不存在"
+            )
+        
+        # 檢查權限 (只有乘客或司機可以查看)
+        if trip.user_id != current_user.id and trip.driver_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="無權限查看此行程"
+            )
+        
+        return await service._build_trip_response(trip)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"獲取行程詳情失敗: {str(e)}"
+        )
+
+@router.get("/", response_model=List[TripSummary])
+async def get_user_trips(
+    status: Optional[str] = Query(None, description="篩選狀態"),
+    limit: int = Query(20, ge=1, le=100, description="返回數量"),
+    offset: int = Query(0, ge=0, description="偏移量"),
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    獲取用戶行程列表 (乘客和司機)
+    """
+    from sqlalchemy import select, or_, desc
+    from app.models.ride import Trip
     
-    result = await session.execute(
-        select(Trip).where(Trip.trip_id == trip_id)
-    )
-    trip = result.scalar_one_or_none()
-    if not trip:
-        raise HTTPException(status_code=404, detail="行程不存在")
-    
-    # 檢查權限
-    if trip.user_id != current_user.id and trip.driver_id != current_user.id:
-        raise HTTPException(status_code=403, detail="無權限查看此行程")
-    
-    return trip
+    try:
+        # 構建查詢
+        query = select(Trip).where(
+            or_(Trip.user_id == current_user.id, Trip.driver_id == current_user.id)
+        )
+        
+        if status:
+            query = query.where(Trip.status == status)
+        
+        query = query.order_by(desc(Trip.requested_at)).offset(offset).limit(limit)
+        
+        result = await db.execute(query)
+        trips = result.scalars().all()
+        
+        # 轉換為摘要格式
+        summaries = []
+        for trip in trips:
+            summaries.append(TripSummary(
+                trip_id=trip.trip_id,
+                status=trip.status,
+                pickup_address=trip.pickup_address,
+                dropoff_address=trip.dropoff_address,
+                distance_km=trip.distance_km,
+                total_amount=int(trip.total_amount * 1000000) if trip.total_amount else None,
+                requested_at=trip.requested_at,
+                completed_at=trip.completed_at
+            ))
+        
+        return summaries
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"獲取行程列表失敗: {str(e)}"
+        )
+
+# 區塊鏈支付相關端點
+
+@router.get("/payment/wallet/balance", response_model=WalletBalance)
+async def get_wallet_balance(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    查詢用戶錢包餘額
+    """
+    try:
+        balance = await iota_service.get_wallet_balance(current_user.wallet_address)
+        return balance
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"查詢錢包餘額失敗: {str(e)}"
+        )
+
+@router.get("/payment/transaction/{tx_hash}", response_model=TransactionStatus)
+async def get_transaction_status(
+    tx_hash: str,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    查詢區塊鏈交易狀態
+    """
+    try:
+        status_info = await iota_service.get_transaction_status(tx_hash)
+        return status_info
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"查詢交易狀態失敗: {str(e)}"
+        )

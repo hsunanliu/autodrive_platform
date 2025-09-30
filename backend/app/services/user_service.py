@@ -5,6 +5,7 @@ from sqlalchemy import select, func
 from app.models.user import User
 from app.core.security import hash_password, verify_password
 from app.schemas.user import UserCreateWithPassword, UserResponse, UserUpdate
+from app.services.contract_service import contract_service
 import logging
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,30 @@ class UserService:
         self.db.add(user)
         await self.db.commit()
         await self.db.refresh(user)
+        
+        # 在智能合約中註冊用戶
+        try:
+            import hashlib
+            # 使用 SHA256 生成確定性的正數哈希
+            hash_input = f"{user.username}{user.wallet_address}".encode('utf-8')
+            did_hash = hashlib.sha256(hash_input).digest()
+            contract_result = await contract_service.register_user_on_chain(
+                user_address=user.wallet_address,
+                did_hash=did_hash,
+                user_type=user.user_type
+            )
+            
+            if contract_result.get("success"):
+                # 更新用戶的區塊鏈對象ID
+                user.blockchain_object_id = contract_result.get("object_id")
+                await self.db.commit()
+                logger.info(f"✅ User registered on blockchain: {contract_result['transaction_hash']}")
+            else:
+                logger.warning(f"⚠️ Blockchain registration failed: {contract_result.get('error')}")
+                
+        except Exception as e:
+            logger.error(f"❌ Blockchain registration error: {e}")
+            # 不影響用戶創建，只是沒有上鏈
         
         logger.info(f"✅ User created: {user.username}")
         return user
