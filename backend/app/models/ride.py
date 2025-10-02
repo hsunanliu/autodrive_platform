@@ -208,6 +208,11 @@ class Trip(Base):
         nullable=True,
         comment="取消時間"
     )
+    escrow_object_id = Column(
+        String(66),
+        nullable=True,
+        comment="智能合約託管對象ID"
+    )
     
     # === 關聯關係 ===
     passenger = relationship("User", foreign_keys=[user_id])

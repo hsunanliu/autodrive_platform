@@ -1,7 +1,7 @@
 # backend/app/services/trip_service.py
 """
-Trip 業務邏輯服務
-處理行程管理的核心業務邏輯
+Trip 業務邏輯服務 - 重構版
+所有配對和行程管理邏輯都在後端，僅在關鍵點調用鏈上合約
 """
 
 import logging
@@ -9,7 +9,6 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_, func, desc
-from sqlalchemy.orm import selectinload
 
 from app.models.ride import Trip
 from app.models.user import User
@@ -18,18 +17,17 @@ from app.schemas.trip import (
     TripCreate, TripResponse, TripStatus, TripFareBreakdown, 
     TripEstimate, DriverTripInfo, TripSummary
 )
-from app.schemas.payment import PaymentTransaction, PaymentStatus
 from app.services.location_service import LocationService
-from app.services.iota_service import iota_service
-from app.services.contract_service import contract_service
+from app.services.escrow_service import EscrowService  # 新的託管服務
 
 logger = logging.getLogger(__name__)
 
 class TripService:
-    """行程服務類"""
+    """行程服務 - 業務邏輯完全在後端"""
     
     def __init__(self, db: AsyncSession):
         self.db = db
+        self.escrow_service = EscrowService()
         
         # 費率配置 (micro IOTA)
         self.BASE_FARE = 50000  # 起跳價
@@ -38,37 +36,37 @@ class TripService:
         self.PLATFORM_FEE_RATE = 0.1  # 平台費率 10%
         
         # 配對參數
-        self.MAX_PICKUP_DISTANCE_KM = 10.0  # 最大接送距離
-        self.MAX_WAIT_TIME_MINUTES = 15  # 最大等待時間
+        self.MAX_PICKUP_DISTANCE_KM = 10.0
+        self.MAX_WAIT_TIME_MINUTES = 15
+    
+    # ========================================================================
+    # 行程創建 - 純後端邏輯，不調用合約
+    # ========================================================================
     
     async def create_trip_request(self, user_id: int, trip_data: TripCreate) -> TripResponse:
         """
-        創建行程請求
+        創建行程請求 - 完全在後端處理
         
-        Args:
-            user_id: 乘客用戶ID
-            trip_data: 行程創建數據
-            
-        Returns:
-            創建的行程信息
+        變更:
+        - ❌ 不再調用 ride_matching 合約
+        - ✅ 直接在資料庫創建記錄
+        - ✅ 觸發後端配對算法
         """
         # 檢查用戶是否有進行中的行程
         existing_trip = await self._get_user_active_trip(user_id)
         if existing_trip:
-            raise ValueError("您已有進行中的行程，無法創建新的行程請求")
+            raise ValueError("您已有進行中的行程")
         
-        # 計算預估距離和時間
+        # 計算距離和預估
         distance_km = LocationService.haversine_km(
             trip_data.pickup_lat, trip_data.pickup_lng,
             trip_data.dropoff_lat, trip_data.dropoff_lng
         )
         
         estimated_duration = LocationService.estimate_travel_time_minutes(distance_km)
-        
-        # 計算預估費用
         fare_breakdown = self._calculate_fare(distance_km, estimated_duration)
         
-        # 創建行程記錄
+        # 創建本地行程記錄
         trip = Trip(
             user_id=user_id,
             pickup_lat=trip_data.pickup_lat,
@@ -81,73 +79,57 @@ class TripService:
             distance_km=distance_km,
             estimated_duration_minutes=estimated_duration,
             status=TripStatus.REQUESTED,
-            base_fare=fare_breakdown.base_fare / 1000000,  # 轉換為 IOTA 存儲
+            base_fare=fare_breakdown.base_fare / 1000000,
             per_km_rate=fare_breakdown.per_km_rate / 1000000,
             service_fee=fare_breakdown.platform_fee / 1000000,
-            fare=fare_breakdown.total_amount / 1000000
+            fare=fare_breakdown.total_amount / 1000000,
+            requested_at=datetime.utcnow()
         )
         
         self.db.add(trip)
         await self.db.commit()
         await self.db.refresh(trip)
         
-        # 在智能合約中創建叫車請求
+        # 自動觸發配對 (異步，不阻塞)
         try:
-            passenger = await self._get_user_by_id(user_id)
-            if passenger:
-                contract_result = await contract_service.create_ride_request_on_chain(
-                    passenger_address=passenger.wallet_address,
-                    request_data={
-                        "pickup_lat": trip_data.pickup_lat,
-                        "pickup_lng": trip_data.pickup_lng,
-                        "dropoff_lat": trip_data.dropoff_lat,
-                        "dropoff_lng": trip_data.dropoff_lng,
-                        "max_price": fare_breakdown.total_amount,
-                        "expires_at": int((datetime.utcnow() + timedelta(minutes=30)).timestamp())
-                    }
-                )
-                
-                if contract_result.get("success"):
-                    logger.info(f"✅ Ride request created on blockchain: {contract_result['transaction_hash']}")
-                else:
-                    logger.warning(f"⚠️ Blockchain ride request failed: {contract_result.get('error')}")
+            await self.find_and_match_driver(trip.trip_id)
         except Exception as e:
-            logger.error(f"❌ Blockchain ride request error: {e}")
+            logger.warning(f"自動配對失敗: {e}")
         
-        logger.info(f"✅ Trip request created: {trip.trip_id}")
-        
-        # 返回響應
+        logger.info(f"✅ 行程創建成功 (後端): {trip.trip_id}")
         return await self._build_trip_response(trip, fare_breakdown)
+    
+    # ========================================================================
+    # 配對邏輯 - 完全在後端
+    # ========================================================================
     
     async def find_and_match_driver(self, trip_id: int) -> Optional[DriverTripInfo]:
         """
-        查找並配對司機
+        配對司機 - 完全在後端執行
         
-        Args:
-            trip_id: 行程ID
-            
-        Returns:
-            配對的司機信息，如果沒有找到則返回 None
+        變更:
+        - ❌ 不調用 confirm_match 合約
+        - ✅ 使用後端算法選擇最佳司機
+        - ✅ 直接更新資料庫狀態
         """
-        # 獲取行程信息
         trip = await self._get_trip_by_id(trip_id)
         if not trip or trip.status != TripStatus.REQUESTED:
             raise ValueError("行程不存在或狀態不正確")
         
-        # 查找附近可用的車輛和司機
+        # 查找附近可用司機
         available_matches = await self._find_available_drivers(
             trip.pickup_lat, trip.pickup_lng, 
             self.MAX_PICKUP_DISTANCE_KM
         )
         
         if not available_matches:
-            logger.info(f"No available drivers found for trip {trip_id}")
+            logger.info(f"未找到可用司機: trip {trip_id}")
             return None
         
         # 選擇最佳匹配 (距離最近)
         best_match = available_matches[0]
         
-        # 更新行程狀態為已配對
+        # 直接更新資料庫 - 不調用合約
         trip.status = TripStatus.MATCHED
         trip.vehicle_id = best_match["vehicle_id"]
         trip.driver_id = best_match["driver_id"]
@@ -155,9 +137,8 @@ class TripService:
         
         await self.db.commit()
         
-        logger.info(f"✅ Trip {trip_id} matched with driver {best_match['driver_id']}")
+        logger.info(f"✅ 配對成功 (後端): trip {trip_id} <- driver {best_match['driver_id']}")
         
-        # 返回司機端行程信息
         return DriverTripInfo(
             trip_id=trip.trip_id,
             passenger_name=best_match["passenger_name"],
@@ -173,60 +154,105 @@ class TripService:
                 "address": trip.dropoff_address
             },
             passenger_count=trip.passenger_count,
-            estimated_fare=int(trip.fare * 1000000),  # 轉換為 micro IOTA
+            estimated_fare=int(trip.fare * 1000000),
             distance_to_pickup_km=best_match["distance_km"],
-            notes=trip.notes if hasattr(trip, 'notes') else None
+            notes=None
         )
     
-    async def accept_trip(self, trip_id: int, driver_id: int, estimated_arrival: int) -> TripResponse:
+    # ========================================================================
+    # 司機接受行程 - 後端 + 鏈上支付鎖定
+    # ========================================================================
+    
+    async def accept_trip(self, trip_id: int, driver_id: int, estimated_arrival: int) -> Dict[str, Any]:
         """
-        司機接受行程
+        司機接受行程 - 關鍵變更點
         
-        Args:
-            trip_id: 行程ID
-            driver_id: 司機ID
-            estimated_arrival: 預估到達時間(分鐘)
-            
-        Returns:
-            更新後的行程信息
+        變更:
+        - ✅ 更新後端狀態
+        - ✅ 準備鏈上支付鎖定交易
+        - ⚠️  需要前端調用錢包簽署
         """
         trip = await self._get_trip_by_id(trip_id)
         if not trip:
             raise ValueError("行程不存在")
         
         if trip.status != TripStatus.MATCHED:
-            raise ValueError("行程狀態不正確，無法接受")
+            raise ValueError("行程狀態不正確")
         
         if trip.driver_id != driver_id:
-            raise ValueError("您不是此行程的指定司機")
+            raise ValueError("您不是此行程的司機")
         
-        # 更新行程狀態
+        # 獲取乘客和司機資訊
+        passenger = await self._get_user_by_id(trip.user_id)
+        driver = await self._get_user_by_id(driver_id)
+        
+        # 計算支付金額
+        total_amount = int(trip.fare * 1000000)  # 轉為 micro IOTA
+        platform_fee = int(total_amount * self.PLATFORM_FEE_RATE)
+        
+        # 準備鏈上支付鎖定
+        escrow_result = await self.escrow_service.lock_payment(
+            passenger_wallet=passenger.wallet_address,
+            driver_wallet=driver.wallet_address,
+            trip_id=trip.trip_id,
+            amount=total_amount,
+            platform_fee=platform_fee
+        )
+        
+        # 更新行程狀態 (等待支付鎖定確認)
         trip.status = TripStatus.ACCEPTED
         
-        # 更新車輛狀態為忙碌
+        # 更新車輛狀態
         if trip.vehicle_id:
-            stmt = select(Vehicle).where(Vehicle.vehicle_id == trip.vehicle_id)
-            result = await self.db.execute(stmt)
-            vehicle = result.scalar_one_or_none()
+            vehicle = await self._get_vehicle_by_id(trip.vehicle_id)
             if vehicle:
                 vehicle.status = "on_trip"
         
         await self.db.commit()
         
-        logger.info(f"✅ Trip {trip_id} accepted by driver {driver_id}")
+        logger.info(f"✅ 司機接受行程: {trip_id}, 等待支付鎖定")
+        
+        return {
+            "trip": await self._build_trip_response(trip),
+            "escrow_transaction": escrow_result,
+            "instructions": [
+                "1. 乘客需要使用錢包簽署支付鎖定交易",
+                "2. 簽署後資金將被託管在智能合約中",
+                "3. 司機可以開始前往接送地點"
+            ]
+        }
+    
+    # ========================================================================
+    # 確認支付鎖定 - 更新託管ID
+    # ========================================================================
+    
+    async def confirm_payment_lock(self, trip_id: int, escrow_object_id: str) -> TripResponse:
+        """
+        確認支付已鎖定
+        
+        新增功能:
+        - 接收前端提交的 escrow_object_id
+        - 更新到行程記錄中
+        """
+        trip = await self._get_trip_by_id(trip_id)
+        if not trip:
+            raise ValueError("行程不存在")
+        
+        # 保存託管對象ID
+        trip.escrow_object_id = escrow_object_id
+        await self.db.commit()
+        
+        logger.info(f"✅ 支付鎖定確認: trip {trip_id}, escrow {escrow_object_id}")
         
         return await self._build_trip_response(trip)
     
+    # ========================================================================
+    # 上車 - 純後端
+    # ========================================================================
+    
     async def pickup_passenger(self, trip_id: int, driver_id: int) -> TripResponse:
         """
-        確認乘客上車
-        
-        Args:
-            trip_id: 行程ID
-            driver_id: 司機ID
-            
-        Returns:
-            更新後的行程信息
+        確認乘客上車 - 純後端操作
         """
         trip = await self._get_trip_by_id(trip_id)
         if not trip:
@@ -238,26 +264,27 @@ class TripService:
         if trip.status != TripStatus.ACCEPTED:
             raise ValueError("行程狀態不正確")
         
-        # 更新狀態
         trip.status = TripStatus.PICKED_UP
         trip.picked_up_at = datetime.utcnow()
         
         await self.db.commit()
         
-        logger.info(f"✅ Passenger picked up for trip {trip_id}")
+        logger.info(f"✅ 乘客已上車: trip {trip_id}")
         
         return await self._build_trip_response(trip)
     
+    # ========================================================================
+    # 完成行程 - 後端 + 鏈上支付釋放
+    # ========================================================================
+    
     async def complete_trip(self, trip_id: int, driver_id: int) -> Dict[str, Any]:
         """
-        完成行程並處理支付
+        完成行程 - 關鍵變更點
         
-        Args:
-            trip_id: 行程ID
-            driver_id: 司機ID
-            
-        Returns:
-            完成結果，包含支付信息
+        變更:
+        - ✅ 更新後端狀態
+        - ✅ 調用鏈上支付釋放
+        - ✅ 可選: 創建鏈上收據
         """
         trip = await self._get_trip_by_id(trip_id)
         if not trip:
@@ -269,59 +296,48 @@ class TripService:
         if trip.status not in [TripStatus.PICKED_UP, TripStatus.IN_PROGRESS]:
             raise ValueError("行程狀態不正確")
         
+        # 檢查是否有託管記錄
+        if not trip.escrow_object_id:
+            raise ValueError("找不到支付託管記錄")
+        
         # 計算實際行程時間
         if trip.picked_up_at:
-            # 確保時區一致性
             now = datetime.utcnow()
             if trip.picked_up_at.tzinfo is not None:
-                # 如果 picked_up_at 有時區信息，轉換 now 為 UTC
                 from datetime import timezone
                 now = now.replace(tzinfo=timezone.utc)
-                actual_duration = int((now - trip.picked_up_at).total_seconds() / 60)
-            else:
-                # 如果 picked_up_at 沒有時區信息，直接計算
-                actual_duration = int((now - trip.picked_up_at).total_seconds() / 60)
+            actual_duration = int((now - trip.picked_up_at).total_seconds() / 60)
         else:
             actual_duration = trip.estimated_duration_minutes
         
-        # 重新計算費用 (基於實際時間)
+        # 重新計算最終費用
         fare_breakdown = self._calculate_fare(trip.distance_km, actual_duration)
         
-        # 獲取乘客和司機信息
-        passenger = await self._get_user_by_id(trip.user_id)
+        # 獲取司機資訊
         driver = await self._get_user_by_id(driver_id)
+        passenger = await self._get_user_by_id(trip.user_id)
         
-        if not passenger or not driver:
-            raise ValueError("無法找到乘客或司機信息")
-        
-        # 執行區塊鏈支付
-        payment_result = await iota_service.execute_trip_payment(
-            passenger_wallet=passenger.wallet_address,
+        # 調用鏈上支付釋放
+        release_result = await self.escrow_service.release_payment(
+            escrow_object_id=trip.escrow_object_id,
             driver_wallet=driver.wallet_address,
-            amount_breakdown={
-                "total_amount": fare_breakdown.total_amount,
-                "driver_amount": fare_breakdown.driver_amount,
-                "platform_fee": fare_breakdown.platform_fee
-            },
-            trip_id=trip_id
+            trip_id=trip.trip_id
         )
         
-        if not payment_result.get("success"):
-            raise Exception(f"支付失敗: {payment_result.get('error')}")
+        if not release_result.get("success"):
+            raise Exception(f"支付釋放失敗: {release_result.get('error')}")
         
         # 更新行程狀態
         trip.status = TripStatus.COMPLETED
         trip.completed_at = datetime.utcnow()
         trip.actual_duration_minutes = actual_duration
-        trip.total_amount = fare_breakdown.total_amount / 1000000  # 轉換為 IOTA
+        trip.total_amount = fare_breakdown.total_amount / 1000000
         trip.payment_amount_micro_iota = str(fare_breakdown.total_amount)
-        trip.blockchain_tx_id = payment_result["transaction_hash"]
+        trip.blockchain_tx_id = release_result.get("transaction_hash")
         
         # 釋放車輛
         if trip.vehicle_id:
-            stmt = select(Vehicle).where(Vehicle.vehicle_id == trip.vehicle_id)
-            result = await self.db.execute(stmt)
-            vehicle = result.scalar_one_or_none()
+            vehicle = await self._get_vehicle_by_id(trip.vehicle_id)
             if vehicle:
                 vehicle.status = "available"
                 vehicle.total_trips += 1
@@ -333,29 +349,47 @@ class TripService:
         
         await self.db.commit()
         
-        logger.info(f"✅ Trip {trip_id} completed with payment {payment_result['transaction_hash']}")
+        logger.info(f"✅ 行程完成: trip {trip_id}, tx {release_result.get('transaction_hash')}")
+        
+        # 可選: 創建鏈上收據
+        receipt_result = None
+        try:
+            receipt_result = await self.escrow_service.create_trip_receipt(
+                trip_id=trip.trip_id,
+                passenger_address=passenger.wallet_address,
+                driver_address=driver.wallet_address,
+                pickup_lat=trip.pickup_lat,
+                pickup_lng=trip.pickup_lng,
+                dropoff_lat=trip.dropoff_lat,
+                dropoff_lng=trip.dropoff_lng,
+                distance_km=int(trip.distance_km * 1000),  # 轉為米
+                final_amount=fare_breakdown.total_amount
+            )
+            logger.info(f"✅ 鏈上收據已創建: {receipt_result.get('receipt_id')}")
+        except Exception as e:
+            logger.warning(f"創建鏈上收據失敗 (不影響行程): {e}")
         
         return {
             "trip": await self._build_trip_response(trip, fare_breakdown),
             "payment": {
-                "transaction_hash": payment_result["transaction_hash"],
-                "status": payment_result["status"],
-                "amount_micro_iota": str(fare_breakdown.total_amount)
-            }
+                "transaction_hash": release_result["transaction_hash"],
+                "status": "released",
+                "driver_amount": fare_breakdown.driver_amount,
+                "platform_fee": fare_breakdown.platform_fee
+            },
+            "receipt": receipt_result
         }
+    
+    # ========================================================================
+    # 取消行程 - 後端 + 可能的退款
+    # ========================================================================
     
     async def cancel_trip(self, trip_id: int, user_id: int, reason: str, cancelled_by: str) -> TripResponse:
         """
         取消行程
         
-        Args:
-            trip_id: 行程ID
-            user_id: 取消者用戶ID
-            reason: 取消原因
-            cancelled_by: 取消者角色
-            
-        Returns:
-            更新後的行程信息
+        變更:
+        - ✅ 如果已鎖定支付，調用退款
         """
         trip = await self._get_trip_by_id(trip_id)
         if not trip:
@@ -370,6 +404,17 @@ class TripService:
         if trip.status in [TripStatus.COMPLETED, TripStatus.CANCELLED]:
             raise ValueError("行程已完成或已取消")
         
+        # 如果已鎖定支付，進行退款
+        if trip.escrow_object_id and trip.status in [TripStatus.ACCEPTED, TripStatus.PICKED_UP]:
+            try:
+                await self.escrow_service.refund_payment(
+                    escrow_object_id=trip.escrow_object_id,
+                    requester_wallet=await self._get_user_wallet(user_id)
+                )
+                logger.info(f"✅ 已觸發退款: trip {trip_id}")
+            except Exception as e:
+                logger.error(f"退款失敗: {e}")
+        
         # 更新狀態
         trip.status = TripStatus.CANCELLED
         trip.cancelled_at = datetime.utcnow()
@@ -377,44 +422,32 @@ class TripService:
         
         # 釋放車輛
         if trip.vehicle_id:
-            stmt = select(Vehicle).where(Vehicle.vehicle_id == trip.vehicle_id)
-            result = await self.db.execute(stmt)
-            vehicle = result.scalar_one_or_none()
+            vehicle = await self._get_vehicle_by_id(trip.vehicle_id)
             if vehicle:
                 vehicle.status = "available"
         
         await self.db.commit()
         
-        logger.info(f"✅ Trip {trip_id} cancelled by {cancelled_by}")
+        logger.info(f"✅ 行程已取消: trip {trip_id} by {cancelled_by}")
         
         return await self._build_trip_response(trip)
     
+    # ========================================================================
+    # 預估行程 - 純後端
+    # ========================================================================
+    
     async def get_trip_estimate(self, pickup_lat: float, pickup_lng: float, 
                                dropoff_lat: float, dropoff_lng: float) -> TripEstimate:
-        """
-        獲取行程預估
-        
-        Args:
-            pickup_lat, pickup_lng: 上車點座標
-            dropoff_lat, dropoff_lng: 下車點座標
-            
-        Returns:
-            行程預估信息
-        """
-        # 計算距離和時間
+        """獲取行程預估"""
         distance_km = LocationService.haversine_km(pickup_lat, pickup_lng, dropoff_lat, dropoff_lng)
         duration_minutes = LocationService.estimate_travel_time_minutes(distance_km)
-        
-        # 計算費用
         fare_breakdown = self._calculate_fare(distance_km, duration_minutes)
         
-        # 查詢附近可用車輛數量
         available_vehicles = await self._find_available_drivers(pickup_lat, pickup_lng, self.MAX_PICKUP_DISTANCE_KM)
         
-        # 估算等待時間
         if available_vehicles:
             avg_distance = sum(v["distance_km"] for v in available_vehicles) / len(available_vehicles)
-            wait_time = max(3, int(avg_distance * 2))  # 每公里2分鐘
+            wait_time = max(3, int(avg_distance * 2))
         else:
             wait_time = self.MAX_WAIT_TIME_MINUTES
         
@@ -426,10 +459,12 @@ class TripService:
             estimated_wait_time_minutes=wait_time
         )
     
+    # ========================================================================
     # 私有輔助方法
+    # ========================================================================
     
     def _calculate_fare(self, distance_km: float, duration_minutes: int) -> TripFareBreakdown:
-        """計算行程費用"""
+        """計算費用"""
         base_fare = self.BASE_FARE
         distance_fare = int(distance_km * self.PER_KM_RATE)
         time_fare = int(duration_minutes * self.PER_MINUTE_RATE)
@@ -465,9 +500,25 @@ class TripService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
     
+    async def _get_vehicle_by_id(self, vehicle_id: str) -> Optional[Vehicle]:
+        """根據ID獲取車輛"""
+        stmt = select(Vehicle).where(Vehicle.vehicle_id == vehicle_id)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+    
+    async def _get_user_wallet(self, user_id: int) -> str:
+        """獲取用戶錢包地址"""
+        user = await self._get_user_by_id(user_id)
+        if not user:
+            raise ValueError("用戶不存在")
+        return user.wallet_address
+    
     async def _get_user_active_trip(self, user_id: int) -> Optional[Trip]:
         """獲取用戶的活躍行程"""
-        active_statuses = [TripStatus.REQUESTED, TripStatus.MATCHED, TripStatus.ACCEPTED, TripStatus.PICKED_UP, TripStatus.IN_PROGRESS]
+        active_statuses = [
+            TripStatus.REQUESTED, TripStatus.MATCHED, TripStatus.ACCEPTED, 
+            TripStatus.PICKED_UP, TripStatus.IN_PROGRESS
+        ]
         stmt = select(Trip).where(
             and_(
                 or_(Trip.user_id == user_id, Trip.driver_id == user_id),
@@ -478,8 +529,7 @@ class TripService:
         return result.scalar_one_or_none()
     
     async def _find_available_drivers(self, lat: float, lng: float, radius_km: float) -> List[Dict[str, Any]]:
-        """查找附近可用的司機"""
-        # 查詢可用車輛及其司機
+        """查找附近可用司機"""
         stmt = select(Vehicle, User).join(User, Vehicle.owner_id == User.id).where(
             and_(
                 Vehicle.status == "available",
@@ -493,13 +543,11 @@ class TripService:
         
         matches = []
         for vehicle, driver in vehicles_and_drivers:
-            # 計算距離 (使用車輛當前位置或隨機位置)
             if vehicle.current_lat and vehicle.current_lng:
                 distance_km = LocationService.haversine_km(
                     lat, lng, vehicle.current_lat, vehicle.current_lng
                 )
             else:
-                # 如果沒有位置信息，使用隨機位置
                 import time
                 minute_bucket = int(time.time() // 60)
                 rand_lat, rand_lng = LocationService.random_point_near(
@@ -513,14 +561,13 @@ class TripService:
                     "vehicle_id": vehicle.vehicle_id,
                     "driver_id": driver.id,
                     "driver_name": driver.username,
-                    "passenger_name": driver.username,  # 這裡應該是乘客名，但當前上下文是司機
+                    "passenger_name": driver.username,
                     "passenger_phone": driver.phone_number,
                     "distance_km": distance_km,
                     "vehicle_model": vehicle.model,
                     "vehicle_type": vehicle.vehicle_type
                 })
         
-        # 按距離排序
         matches.sort(key=lambda x: x["distance_km"])
         return matches
     
