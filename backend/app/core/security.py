@@ -8,12 +8,19 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from app.config import settings
 
-# 密碼加密
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# 密碼加密 - 使用更簡單的配置避免 bcrypt 版本問題
+try:
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+except Exception:
+    # 如果 bcrypt 有問題，使用 pbkdf2_sha256 作為備選
+    pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 
 def hash_password(password: str) -> str:
     """加密密碼"""
+    # 確保密碼不超過 72 字節 (bcrypt 限制)
+    if len(password.encode('utf-8')) > 72:
+        password = password[:72]
     return pwd_context.hash(password)
 
 

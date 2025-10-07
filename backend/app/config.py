@@ -27,16 +27,22 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     
     # IOTA 配置
-    IOTA_NODE_URL: str = "https://api.testnet.iota.cafe"
-    IOTA_NETWORK: str = "testnet"
-    CONTRACT_PACKAGE_ID: str = "0xa353f4acea9dbacd0cc7af37479b277299160d9288495d017ec4d824ea7a5d31"
-    USER_REGISTRY_ID: str = "0x9bdeefc53afba9fca554dc61025514e21fb4e9f9281ad4449bca86f72f18dd5f"
-    VEHICLE_REGISTRY_ID: str = "0xfaf54e90664e669943e07e9845dbd2523e71920b04dd5bf264700a68c1370ce4"
-    MATCHING_SERVICE_ID: str = "0xa700e716702ae263edc3db7201da6235231e4b76a534c3bb23842eb92a29bfda"
-    PLATFORM_WALLET: str = "0x0000000000000000000000000000000000000000000000000000000000000000"
+    IOTA_NODE_URL: str = os.getenv("IOTA_NODE_URL", "https://api.testnet.iota.cafe")
+    IOTA_NETWORK: str = os.getenv("IOTA_NETWORK", "testnet")
+    CONTRACT_PACKAGE_ID: str = os.getenv("CONTRACT_PACKAGE_ID", "0xa353f4acea9dbacd0cc7af37479b277299160d9288495d017ec4d824ea7a5d31")
+    USER_REGISTRY_ID: str = os.getenv("USER_REGISTRY_ID", "0x9bdeefc53afba9fca554dc61025514e21fb4e9f9281ad4449bca86f72f18dd5f")
+    VEHICLE_REGISTRY_ID: str = os.getenv("VEHICLE_REGISTRY_ID", "0xfaf54e90664e669943e07e9845dbd2523e71920b04dd5bf264700a68c1370ce4")
+    MATCHING_SERVICE_ID: str = os.getenv("MATCHING_SERVICE_ID", "0xa700e716702ae263edc3db7201da6235231e4b76a534c3bb23842eb92a29bfda")
+    PLATFORM_WALLET: str = os.getenv("PLATFORM_WALLET_ADDRESS", "0x0000000000000000000000000000000000000000000000000000000000000000")
     
     # Mock 模式設置（測試用）
-    MOCK_MODE: bool = True
+    MOCK_MODE: bool = os.getenv("MOCK_MODE", "true").lower() == "false"
+    
+    # 真實區塊鏈交互模式
+    REAL_BLOCKCHAIN_MODE: bool = os.getenv("REAL_BLOCKCHAIN_MODE", "false").lower() == "true"
+    
+    # 平台私鑰（僅在真實模式下需要）
+    PLATFORM_PRIVATE_KEY: str = os.getenv("PLATFORM_PRIVATE_KEY", "")
     
     class Config:
         env_file = ".env"

@@ -1,62 +1,86 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
-import 'vehicle_map_page.dart';
+
+import 'services/api_service.dart';
 
 class VehicleListPage extends StatefulWidget {
+  const VehicleListPage({super.key});
+
   @override
-  _VehicleListPageState createState() => _VehicleListPageState();
+  State<VehicleListPage> createState() => _VehicleListPageState();
 }
 
 class _VehicleListPageState extends State<VehicleListPage> {
-  List<dynamic> vehicles = [];
+  bool _isLoading = true;
+  List<Map<String, dynamic>> _vehicles = const [];
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _loadVehicleData();
+    _loadVehicles();
   }
 
-  Future<void> _loadVehicleData() async {
-    final String response = await rootBundle.loadString('assets/vehicles.json');
-    final data = await json.decode(response);
+  Future<void> _loadVehicles() async {
     setState(() {
-      vehicles = data;
+      _isLoading = true;
+      _error = null;
     });
+
+    final result = await ApiService.getAvailableVehicles(
+      lat: 25.0330,
+      lng: 121.5654,
+      radiusKm: 5,
+      limit: 20,
+    );
+
+    if (!mounted) return;
+
+    if (result['success'] == true && result['data'] is List) {
+      setState(() {
+        _vehicles = (result['data'] as List)
+            .whereType<Map<String, dynamic>>()
+            .toList(growable: false);
+        _isLoading = false;
+      });
+    } else {
+      setState(() {
+        _isLoading = false;
+        _error = result['error']?.toString() ?? '載入失敗';
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('車輛清單'),
-      ),
-      body: ListView(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: ElevatedButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => VehicleMapPage(),
-                  ),
-                );
-              },
-              child: Text('查看所有車輛地圖'),
-            ),
+        title: const Text('可用車輛'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _isLoading ? null : _loadVehicles,
           ),
-          ...vehicles.map((vehicle) {
-            return ListTile(
-              leading: Icon(Icons.directions_car),
-              title: Text(vehicle['id'] ?? '未知車輛'),
-              subtitle: Text(
-                  '位置: (${vehicle['location'][0]}, ${vehicle['location'][1]})'),
-            );
-          }).toList(),
         ],
       ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: Color(0xFF1DB954)))
+          : _error != null
+              ? Center(child: Text(_error!, style: const TextStyle(color: Colors.white70)))
+              : ListView.builder(
+                  itemCount: _vehicles.length,
+                  itemBuilder: (_, index) {
+                    final vehicle = _vehicles[index];
+                    return ListTile(
+                      leading: const Icon(Icons.directions_car, color: Colors.lightBlueAccent),
+                      title: Text(vehicle['model']?.toString() ?? '未知車輛',
+                          style: const TextStyle(color: Colors.white)),
+                      subtitle: Text(
+                        '距離: ${vehicle['distance_km'] ?? '--'} km · 預計 ${vehicle['estimated_arrival_minutes'] ?? '--'} 分鐘',
+                        style: const TextStyle(color: Colors.white54),
+                      ),
+                    );
+                  },
+                ),
     );
   }
 }
