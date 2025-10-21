@@ -87,8 +87,16 @@ class _RegisterPageState extends State<RegisterPage> {
         arguments: {'role': widget.role},
       );
     } else {
-      final error = result['data']?['detail'] ?? result['error'] ?? '註冊失敗';
-      setState(() => message = error.toString());
+      // 優先從 data.detail 獲取錯誤訊息（後端返回的詳細錯誤）
+      String error = '註冊失敗';
+      
+      if (result['data'] is Map) {
+        error = result['data']['detail']?.toString() ?? error;
+      } else if (result['error'] != null) {
+        error = result['error'].toString();
+      }
+      
+      setState(() => message = error);
     }
   }
 

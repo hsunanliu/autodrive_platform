@@ -49,8 +49,16 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => isLoading = false);
 
     if (result['success'] != true) {
-      final error = result['data']?['detail'] ?? result['error'] ?? '登入失敗';
-      setState(() => message = error.toString());
+      // 優先從 data.detail 獲取錯誤訊息（後端返回的詳細錯誤）
+      String error = '登入失敗';
+      
+      if (result['data'] is Map) {
+        error = result['data']['detail']?.toString() ?? error;
+      } else if (result['error'] != null) {
+        error = result['error'].toString();
+      }
+      
+      setState(() => message = error);
       return;
     }
 

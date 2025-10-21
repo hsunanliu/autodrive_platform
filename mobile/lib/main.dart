@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'driver_earnings_page.dart';
 import 'driver_home_page.dart';
+import 'pages/trip_in_progress_page.dart';
 import 'login_page.dart' as login;
 import 'passenger_home_page.dart';
 import 'payment_page.dart';
@@ -12,6 +13,13 @@ import 'services/api_service.dart';
 import 'session_manager.dart';
 import 'trip_history_page.dart';
 import 'vehicle_register_page.dart';
+// 新增錢包相關頁面
+import 'pages/wallet_page.dart';
+import 'pages/wallet_setup_page.dart';
+import 'pages/register_with_wallet_page.dart';
+import 'pages/register_with_wallet_connect_page.dart';
+import 'pages/auth_page.dart';
+import 'pages/available_trips_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -105,6 +113,7 @@ class ProjectDappApp extends StatelessWidget {
             startAddress: args['start_address'],
             endAddress: args['end_address'],
             vehicleId: args['vehicle_id'],
+            tripId: args['trip_id'] as int?,
           );
         },
         '/trip_history': (context) {
@@ -117,13 +126,32 @@ class ProjectDappApp extends StatelessWidget {
           final session = args['session'] as UserSession? ?? initialSession;
           return DriverEarningsPage(session: session);
         },
+        '/trip_in_progress': (context) {
+          final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>? ?? {};
+          final session = args['session'] as UserSession? ?? initialSession;
+          final tripId = args['tripId'] as int;
+          return TripInProgressPage(session: session, tripId: tripId);
+        },
+        // 錢包相關路由
+        '/wallet': (context) => const WalletPage(),
+        '/wallet/setup': (context) => const WalletSetupPage(),
+        '/register_with_wallet': (context) => const RegisterWithWalletPage(),
+        '/register_with_wallet_connect': (context) => const RegisterWithWalletConnectPage(),
+        // 認證路由
+        '/auth': (context) => const AuthPage(),
+        // 司機功能路由
+        '/available_trips': (context) {
+          final args = ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>? ?? {};
+          final session = args['session'] as UserSession? ?? initialSession;
+          return AvailableTripsPage(session: session);
+        },
       },
     );
   }
 
   Widget _buildInitialHome() {
     if (initialSession == null) {
-      return const RoleSelectPage();
+      return const AuthPage();
     }
 
     if (initialSession!.role == 'driver') {

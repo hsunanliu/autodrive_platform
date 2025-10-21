@@ -112,7 +112,7 @@ class _DriverEarningsPageState extends State<DriverEarningsPage> {
               children: [
                 const Text('總收益',
                     style: TextStyle(color: Colors.white70, fontSize: 16)),
-                Text('${_totalEarnings.toStringAsFixed(2)} IOTA',
+                Text('${_totalEarnings.toStringAsFixed(2)} SUI',
                     style: const TextStyle(
                       color: Color(0xFF1DB954),
                       fontSize: 22,
@@ -171,7 +171,7 @@ class _VehicleEarningTile extends StatelessWidget {
               ],
             ),
           ),
-          Text('${earningsIota.toStringAsFixed(2)} IOTA',
+          Text('${earningsIota.toStringAsFixed(2)} SUI',
               style: const TextStyle(color: Color(0xFF1DB954), fontWeight: FontWeight.bold)),
         ],
       ),

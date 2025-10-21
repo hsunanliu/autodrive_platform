@@ -134,6 +134,10 @@ class _DriverHomePageState extends State<DriverHomePage> {
     Navigator.pushNamed(context, '/profile', arguments: {'session': _session});
   }
 
+  void _openAvailableTrips() {
+    Navigator.pushNamed(context, '/available_trips', arguments: {'session': _session});
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_session == null) {
@@ -228,8 +232,32 @@ class _DriverHomePageState extends State<DriverHomePage> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 查看可接單行程按鈕
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _openAvailableTrips,
+              icon: const Icon(Icons.list_alt, size: 24),
+              label: const Text(
+                '查看可接單行程',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
           Text(
-            '車隊總收益：${_totalEarnings.toStringAsFixed(2)} IOTA',
+            '車隊總收益：${_totalEarnings.toStringAsFixed(2)} SUI',
             style: const TextStyle(
               color: Color(0xFF1DB954),
               fontSize: 18,

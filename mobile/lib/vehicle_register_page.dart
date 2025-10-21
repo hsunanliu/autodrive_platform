@@ -165,9 +165,9 @@ class _RegisterVehiclePageState extends State<RegisterVehiclePage> {
                 Expanded(
                   child: _buildTextField(
                     controller: _hourlyRateController,
-                    label: '每小時費率 (micro IOTA)*',
+                    label: '每小時費率 (micro SUI)*',
                     keyboardType: TextInputType.number,
-                    helper: '1 IOTA = 1,000,000 micro',
+                    helper: '1 SUI = 1,000,000 micro',
                   ),
                 ),
               ],

@@ -179,7 +179,7 @@ class _TripCard extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               amountIota != null
-                  ? '總金額：約 ${amountIota.toStringAsFixed(2)} IOTA'
+                  ? '總金額：約 ${amountIota.toStringAsFixed(2)} SUI'
                   : '總金額：--',
               style: const TextStyle(color: Color(0xFF1DB954), fontWeight: FontWeight.bold),
             ),
