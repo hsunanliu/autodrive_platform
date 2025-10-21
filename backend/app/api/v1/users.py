@@ -32,9 +32,12 @@ async def register_user(
             detail=str(e)
         )
     except Exception as e:
+        import traceback
+        error_detail = f"Registration failed: {str(e)}\n{traceback.format_exc()}"
+        print(error_detail)  # 打印到控制台
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Registration failed"
+            detail=f"Registration failed: {str(e)}"
         )
 
 @router.post("/login", response_model=TokenResponse)
@@ -44,7 +47,7 @@ async def login(
 ):
     """用戶登入"""
     service = UserService(db)
-    user = await service.authenticate_user(
+    user, error_message = await service.authenticate_user(
         credentials.identifier,  # 可以是 username/email/phone
         credentials.password
     )
@@ -52,7 +55,7 @@ async def login(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials"
+            detail=error_message or "登入失敗"
         )
     
     # 創建 JWT token
@@ -67,6 +70,20 @@ async def login(
         expires_in=86400,  # 24 hours
         user=UserResponse.from_orm(user)
     )
+
+@router.get("/check-username/{username}")
+async def check_username(
+    username: str,
+    db: AsyncSession = Depends(get_async_session)
+):
+    """檢查用戶名是否可用"""
+    service = UserService(db)
+    user = await service.get_user_by_username(username)
+    
+    return {
+        "available": user is None,
+        "message": "Username is available" if user is None else "Username already exists"
+    }
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(

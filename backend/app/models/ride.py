@@ -145,6 +145,19 @@ class Trip(Base):
     )
     
     # === 區塊鏈支付 ===
+    payment_status = Column(
+        String(20),
+        default="pending",
+        nullable=False,
+        comment="支付狀態：pending, completed, failed"
+    )
+    
+    payment_tx_hash = Column(
+        String(200),
+        nullable=True,
+        comment="支付交易 Hash"
+    )
+    
     payment_amount_micro_iota = Column(
         String(50),
         nullable=True,

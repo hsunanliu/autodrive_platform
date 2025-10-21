@@ -82,6 +82,19 @@ class User(Base):
         comment="密碼鹽值"
     )
     
+    # === 錢包管理（後端託管模式）===
+    public_key = Column(
+        String(66),
+        nullable=True,
+        comment="錢包公鑰"
+    )
+    
+    encrypted_private_key = Column(
+        Text,
+        nullable=True,
+        comment="加密的私鑰（JSON 格式，包含 encrypted_key 和 salt）"
+    )
+    
     # === 角色與權限 ===
     user_type = Column(
         String(20), 
@@ -176,6 +189,7 @@ class User(Base):
     
     updated_at = Column(
         DateTime(timezone=True), 
+        server_default=func.now(),
         onupdate=func.now(),
         comment="最後更新時間"
     )

@@ -255,3 +255,32 @@ async def get_vehicle_details(
         raise HTTPException(status_code=404, detail="車輛不存在")
     
     return vehicle
+
+@router.put("/{vehicle_id}/status")
+async def update_vehicle_status_by_query(
+    vehicle_id: str,
+    status: str = Query(..., description="新的車輛狀態"),
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
+):
+    """通過查詢參數更新車輛狀態"""
+    
+    result = await session.execute(
+        select(Vehicle).where(
+            and_(
+                Vehicle.vehicle_id == vehicle_id,
+                Vehicle.owner_id == current_user.id
+            )
+        )
+    )
+    vehicle = result.scalar_one_or_none()
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="車輛不存在或無權限")
+    
+    if status not in ["available", "on_trip", "offline", "maintenance"]:
+        raise HTTPException(status_code=400, detail="無效的車輛狀態")
+    
+    vehicle.status = status
+    await session.commit()
+    
+    return {"success": True, "status": status}

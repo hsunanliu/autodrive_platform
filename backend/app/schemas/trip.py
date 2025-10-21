@@ -111,6 +111,7 @@ class TripResponse(BaseModel):
     fare_breakdown: Optional[TripFareBreakdown] = None
     payment_amount_micro_iota: Optional[str] = None
     blockchain_tx_id: Optional[str] = None
+    escrow_object_id: Optional[str] = None  # 託管對象ID（支付鎖定憑證）
     
     # 時間戳
     requested_at: datetime

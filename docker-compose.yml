@@ -51,6 +51,22 @@ services:
     ports:
       - "6379:6379"  # 將 Redis 的 6379 port 映射到本機
 
+  # 4. Dashboard 前端服務
+  dashboard:
+    image: node:20-alpine
+    platform: linux/amd64
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./dashboard:/app
+      - /app/node_modules
+    command: sh -c "npm install && npm run dev -- --host"
+    environment:
+      - VITE_API_BASE_URL=http://10.232.201.156:8000/api/v1/admin
+    depends_on:
+      - backend
+
 # 定義 Docker 的具名磁碟區 (Named Volumes)
 volumes:
   postgres_data:

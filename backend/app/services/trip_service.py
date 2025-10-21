@@ -90,11 +90,12 @@ class TripService:
         await self.db.commit()
         await self.db.refresh(trip)
         
-        # 自動觸發配對 (異步，不阻塞)
-        try:
-            await self.find_and_match_driver(trip.trip_id)
-        except Exception as e:
-            logger.warning(f"自動配對失敗: {e}")
+        # 暫時禁用自動配對，讓司機手動接單
+        # # 自動觸發配對 (異步，不阻塞)
+        # try:
+        #     await self.find_and_match_driver(trip.trip_id)
+        # except Exception as e:
+        #     logger.warning(f"自動配對失敗: {e}")
         
         logger.info(f"✅ 行程創建成功 (後端): {trip.trip_id}")
         return await self._build_trip_response(trip, fare_breakdown)
@@ -176,10 +177,18 @@ class TripService:
         if not trip:
             raise ValueError("行程不存在")
         
-        if trip.status != TripStatus.MATCHED:
+        # 允許從 REQUESTED 或 MATCHED 狀態接單
+        if trip.status not in [TripStatus.REQUESTED, TripStatus.MATCHED]:
             raise ValueError("行程狀態不正確")
         
-        if trip.driver_id != driver_id:
+        # 如果是 REQUESTED 狀態，設置司機
+        if trip.status == TripStatus.REQUESTED:
+            trip.driver_id = driver_id
+            # 獲取司機的車輛
+            driver_vehicles = await self._get_driver_vehicles(driver_id)
+            if driver_vehicles:
+                trip.vehicle_id = driver_vehicles[0].vehicle_id
+        elif trip.driver_id != driver_id:
             raise ValueError("您不是此行程的司機")
         
         # 獲取乘客和司機資訊
@@ -296,10 +305,6 @@ class TripService:
         if trip.status not in [TripStatus.PICKED_UP, TripStatus.IN_PROGRESS]:
             raise ValueError("行程狀態不正確")
         
-        # 檢查是否有託管記錄
-        if not trip.escrow_object_id:
-            raise ValueError("找不到支付託管記錄")
-        
         # 計算實際行程時間
         if trip.picked_up_at:
             now = datetime.utcnow()
@@ -313,19 +318,35 @@ class TripService:
         # 重新計算最終費用
         fare_breakdown = self._calculate_fare(trip.distance_km, actual_duration)
         
-        # 獲取司機資訊
+        # 檢查是否有託管記錄
+        if not trip.escrow_object_id:
+            raise ValueError("此行程尚未支付，無法完成。請確保乘客已完成支付。")
+        
+        # 獲取司機和乘客資訊
         driver = await self._get_user_by_id(driver_id)
         passenger = await self._get_user_by_id(trip.user_id)
+        
+        logger.info(f"🚗 開始完成行程 {trip_id}，司機: {driver.username}，乘客: {passenger.username}")
+        logger.info(f"💰 託管對象ID: {trip.escrow_object_id}")
+        
+        # 計算司機實際收益（扣除平台費用）
+        driver_earnings_mist = fare_breakdown.driver_amount * 1000  # micro SUI -> MIST
         
         # 調用鏈上支付釋放
         release_result = await self.escrow_service.release_payment(
             escrow_object_id=trip.escrow_object_id,
             driver_wallet=driver.wallet_address,
-            trip_id=trip.trip_id
+            trip_id=trip.trip_id,
+            amount_mist=driver_earnings_mist
         )
         
         if not release_result.get("success"):
-            raise Exception(f"支付釋放失敗: {release_result.get('error')}")
+            error_msg = release_result.get('error', '未知錯誤')
+            logger.error(f"❌ 支付釋放失敗: {error_msg}")
+            raise Exception(f"支付釋放失敗: {error_msg}")
+        
+        blockchain_tx_id = release_result.get("transaction_hash")
+        logger.info(f"✅ 支付已成功釋放給司機，交易Hash: {blockchain_tx_id}")
         
         # 更新行程狀態
         trip.status = TripStatus.COMPLETED
@@ -333,19 +354,29 @@ class TripService:
         trip.actual_duration_minutes = actual_duration
         trip.total_amount = fare_breakdown.total_amount / 1000000
         trip.payment_amount_micro_iota = str(fare_breakdown.total_amount)
-        trip.blockchain_tx_id = release_result.get("transaction_hash")
+        trip.blockchain_tx_id = blockchain_tx_id
         
-        # 釋放車輛
+        # 計算司機實際收益（扣除平台費用）
+        driver_earnings_micro = fare_breakdown.driver_amount
+        
+        # 釋放車輛並更新收益
         if trip.vehicle_id:
             vehicle = await self._get_vehicle_by_id(trip.vehicle_id)
             if vehicle:
                 vehicle.status = "available"
                 vehicle.total_trips += 1
                 vehicle.total_distance_km += trip.distance_km
+                # 更新車輛收益
+                current_earnings = int(vehicle.total_earnings_micro_iota or 0)
+                vehicle.total_earnings_micro_iota = str(current_earnings + driver_earnings_micro)
+                logger.info(f"💰 車輛收益更新: +{driver_earnings_micro} micro SUI")
         
-        # 更新用戶統計
+        # 更新用戶統計和收益
         passenger.total_rides_as_passenger += 1
         driver.total_rides_as_driver += 1
+        # 更新司機總收益
+        current_driver_earnings = int(driver.total_earnings_micro_iota or 0)
+        driver.total_earnings_micro_iota = str(current_driver_earnings + driver_earnings_micro)
         
         await self.db.commit()
         
@@ -506,6 +537,13 @@ class TripService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
     
+    async def _get_driver_vehicles(self, driver_id: int) -> list:
+        """獲取司機的車輛列表"""
+        from app.models.vehicle import Vehicle
+        stmt = select(Vehicle).where(Vehicle.owner_id == driver_id)
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
+    
     async def _get_user_wallet(self, user_id: int) -> str:
         """獲取用戶錢包地址"""
         user = await self._get_user_by_id(user_id)
@@ -595,6 +633,7 @@ class TripService:
             fare_breakdown=fare_breakdown,
             payment_amount_micro_iota=trip.payment_amount_micro_iota,
             blockchain_tx_id=trip.blockchain_tx_id,
+            escrow_object_id=trip.escrow_object_id,
             requested_at=trip.requested_at,
             matched_at=trip.matched_at,
             picked_up_at=trip.picked_up_at,

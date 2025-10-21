@@ -36,7 +36,7 @@ class UserService:
             phone_number=user_data.phone_number,
             hashed_password=hash_password(user_data.password),
             user_type=user_data.user_type,
-            display_name=user_data.display_name,
+            display_name=user_data.display_name or user_data.username,
             did_identifier=user_data.did_identifier
         )
         
@@ -83,8 +83,12 @@ class UserService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
     
-    async def authenticate_user(self, identifier: str, password: str) -> Optional[User]:
-        """驗證用戶 - 支援用戶名、郵箱或錢包地址"""
+    async def authenticate_user(self, identifier: str, password: str) -> tuple[Optional[User], Optional[str]]:
+        """驗證用戶 - 支援用戶名、郵箱或錢包地址
+        
+        Returns:
+            (user, error_message): 成功返回 (user, None)，失敗返回 (None, error_message)
+        """
         # 嘗試用戶名
         stmt = select(User).where(User.username == identifier)
         result = await self.db.execute(stmt)
@@ -102,9 +106,19 @@ class UserService:
             result = await self.db.execute(stmt)
             user = result.scalar_one_or_none()
         
-        if user and verify_password(password, user.hashed_password):
-            return user
-        return None
+        # 用戶不存在
+        if not user:
+            return None, "用戶不存在"
+        
+        # 檢查密碼
+        if not verify_password(password, user.hashed_password):
+            return None, "密碼錯誤"
+        
+        # 檢查帳號是否啟用
+        if not user.is_active:
+            return None, "帳號已被停用"
+        
+        return user, None
     async def update_user(self, user_id: int, user_data: UserUpdate) -> Optional[User]:
         """更新用戶資料"""
         user = await self.get_user_by_id(user_id)

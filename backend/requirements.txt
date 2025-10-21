@@ -25,12 +25,11 @@ python-multipart==0.0.6
 # 配置管理
 python-dotenv==1.0.0
 
-# IOTA 區塊鏈 SDK
-iota-sdk==1.1.4
-# 注意：這是 beta 版本，根據官方文檔可能需要調整版本號
+# Sui 區塊鏈 SDK
+pysui==0.65.0
 
 # HTTP 客戶端
-httpx==0.25.2
+httpx>=0.27.0
 aiohttp==3.9.1
 
 # 密碼學工具

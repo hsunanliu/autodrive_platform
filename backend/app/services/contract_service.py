@@ -19,25 +19,25 @@ class ContractService:
     """IOTA 智能合約服務"""
     
     def __init__(self):
-        self.network = settings.IOTA_NETWORK
+        self.network = settings.SUI_NETWORK
         self.user_registry_id = settings.USER_REGISTRY_ID
         self.vehicle_registry_id = settings.VEHICLE_REGISTRY_ID
         self.matching_service_id = settings.MATCHING_SERVICE_ID
         self.contract_package_id = settings.CONTRACT_PACKAGE_ID
         
-        # 初始化 IOTA SDK (如果不是 Mock 模式)
+        # 初始化 Sui SDK (如果不是 Mock 模式)
         if not settings.MOCK_MODE:
-            self._init_iota_sdk()
+            self._init_sui_sdk()
     
-    def _init_iota_sdk(self):
-        """初始化 IOTA SDK"""
+    def _init_sui_sdk(self):
+        """初始化 Sui SDK"""
         try:
-            # 這裡應該初始化真正的 IOTA SDK
-            # 由於 iota-sdk Python 包可能還在開發中，我們先用 HTTP 調用
-            logger.info("Initializing IOTA SDK...")
-            # self.client = IotaClient(settings.IOTA_NODE_URL)
+            # 這裡應該初始化真正的 Sui SDK
+            # 由於 pysui 包可能還在開發中，我們先用 HTTP 調用
+            logger.info("Initializing Sui SDK...")
+            # self.client = SuiClient(settings.SUI_NODE_URL)
         except Exception as e:
-            logger.error(f"Failed to initialize IOTA SDK: {e}")
+            logger.error(f"Failed to initialize Sui SDK: {e}")
             raise
     
     async def register_user_on_chain(
@@ -265,7 +265,7 @@ class ContractService:
             
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    settings.IOTA_NODE_URL,
+                    settings.SUI_NODE_URL,
                     json=verify_payload,
                     timeout=10.0,
                     headers={"Content-Type": "application/json"}

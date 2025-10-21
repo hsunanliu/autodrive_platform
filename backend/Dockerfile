@@ -4,7 +4,7 @@ FROM python:3.11-slim
 # 設定工作目錄
 WORKDIR /app
 
-# 安裝系統依賴（IOTA SDK 可能需要）
+# 安裝系統依賴（Sui SDK 需要）
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     libffi-dev \
     libssl-dev \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # 升級 pip

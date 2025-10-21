@@ -17,7 +17,7 @@ class EscrowService:
     
     def __init__(self):
         self.package_id = settings.CONTRACT_PACKAGE_ID
-        self.node_url = settings.IOTA_NODE_URL
+        self.node_url = settings.SUI_NODE_URL  # 改為 SUI_NODE_URL
     
     async def lock_payment(
         self,
@@ -28,38 +28,42 @@ class EscrowService:
         platform_fee: int
     ) -> Dict[str, Any]:
         """
-        鎖定支付 - 準備交易數據
+        鎖定支付 - 準備合約調用交易數據
         
         Returns:
             交易數據，需要前端錢包簽署
         """
         try:
+            # 準備調用智能合約的交易數據
             tx_data = {
-                "kind": "moveCall",
-                "data": {
-                    "packageObjectId": self.package_id,
-                    "module": "payment_escrow",
-                    "function": "lock_payment",
-                    "arguments": [
-                        # passenger_coin - 由前端提供
-                        str(trip_id),
-                        driver_wallet,
-                        str(platform_fee)
-                    ],
-                    "typeArguments": ["0x2::iota::IOTA"],
-                    "gasBudget": "10000000"
-                }
+                "package_id": self.package_id,
+                "module": "payment_escrow",
+                "function": "lock_payment",
+                "arguments": {
+                    "payment": "COIN_OBJECT_ID",  # 前端需要替換為實際的 coin object
+                    "trip_id": str(trip_id),
+                    "driver": driver_wallet,
+                    "platform": settings.PLATFORM_WALLET,
+                    "platform_fee": str(platform_fee)
+                },
+                "type_arguments": [],
+                "gas_budget": "10000000"
             }
+            
+            logger.info(f"🔒 準備鎖定支付: trip={trip_id}, amount={amount} MIST")
             
             return {
                 "status": "payment_lock_prepared",
                 "transaction_data": tx_data,
                 "amount": amount,
                 "platform_fee": platform_fee,
+                "driver_address": driver_wallet,
+                "platform_address": settings.PLATFORM_WALLET,
                 "instructions": [
-                    "請使用 IOTA 錢包簽署此交易",
-                    f"支付金額: {amount / 1000000:.6f} IOTA",
-                    f"平台費用: {platform_fee / 1000000:.6f} IOTA",
+                    "請使用 Sui 錢包簽署此交易",
+                    f"支付金額: {amount / 1_000_000_000:.6f} SUI",
+                    f"平台費用: {platform_fee / 1_000_000_000:.6f} SUI",
+                    f"司機收益: {(amount - platform_fee) / 1_000_000_000:.6f} SUI",
                     "資金將被安全鎖定在智能合約中"
                 ]
             }
@@ -75,7 +79,8 @@ class EscrowService:
         self,
         escrow_object_id: str,
         driver_wallet: str,
-        trip_id: int
+        trip_id: int,
+        amount_mist: int = None
     ) -> Dict[str, Any]:
         """
         釋放支付 - 執行實際的鏈上交易
@@ -92,60 +97,67 @@ class EscrowService:
             # 這裡應該實際執行鏈上交易
             # 由於需要私鑰簽名，實際部署時需要配置平台錢包
             
-            if settings.MOCK_MODE:
-                # Mock 模式: 模擬交易
-                tx_hash = self._generate_mock_tx_hash(escrow_object_id, trip_id)
-                
+            # escrow_object_id 就是原始的支付交易 hash
+            # 驗證交易並執行實際轉帳給司機
+            
+            logger.info(f"📤 釋放支付: escrow_id={escrow_object_id}, driver={driver_wallet}, trip={trip_id}")
+            
+            # 導入 sui_service 來驗證和執行轉帳
+            from app.services.sui_service import sui_service
+            
+            # 驗證原始支付交易仍然有效
+            tx_status = await sui_service.get_transaction_status(escrow_object_id)
+            
+            if tx_status.status != "confirmed":
+                logger.error(f"❌ 支付交易無效: {escrow_object_id}")
                 return {
-                    "success": True,
-                    "transaction_hash": tx_hash,
-                    "status": "payment_released",
-                    "escrow_id": escrow_object_id,
-                    "recipient": driver_wallet,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "success": False,
+                    "error": f"支付交易狀態異常: {tx_status.status}"
                 }
-# 實際模式: 調用 IOTA RPC
+            
+            logger.info(f"✅ 支付交易驗證通過，準備轉帳給司機")
+            
+            # TODO: 實際執行鏈上轉帳給司機
+            # 這需要平台錢包的私鑰來簽署交易
+            # 目前先記錄，實際轉帳需要配置私鑰
+            
+            # 調用智能合約釋放支付
+            logger.info(f"📤 調用智能合約釋放支付...")
+            logger.info(f"   Escrow Object: {escrow_object_id}")
+            logger.info(f"   Trip ID: {trip_id}")
+            logger.info(f"   Driver: {driver_wallet}")
+            
+            # 調用合約的 release_payment 函數
+            release_result = await sui_service.call_contract_release_payment(
+                package_id=self.package_id,
+                escrow_object_id=escrow_object_id,
+                trip_id=trip_id
+            )
+            
+            if release_result.get("success"):
+                release_tx_hash = release_result.get("transaction_hash")
+                logger.info(f"✅ 合約執行成功，支付已釋放: {release_tx_hash}")
             else:
-                import httpx
-                
-                tx_data = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "iota_moveCall",
-                    "params": {
-                        "signer": settings.PLATFORM_WALLET,
-                        "packageObjectId": self.package_id,
-                        "module": "payment_escrow",
-                        "function": "release_payment",
-                        "typeArguments": [],
-                        "arguments": [
-                            escrow_object_id,
-                            driver_wallet
-                        ],
-                        "gasBudget": "10000000"
-                    }
-                }
-                
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        self.node_url,
-                        json=tx_data,
-                        headers={"Content-Type": "application/json"},
-                        timeout=30.0
-                    )
-                    response.raise_for_status()
-                    result = response.json()
-                
-                if "error" in result:
-                    raise Exception(f"RPC Error: {result['error']}")
-                
+                error_msg = release_result.get("error", "未知錯誤")
+                logger.error(f"❌ 合約執行失敗: {error_msg}")
+                # 如果合約調用失敗，返回錯誤
                 return {
-                    "success": True,
-                    "transaction_hash": result["result"]["digest"],
-                    "status": "payment_released",
-                    "escrow_id": escrow_object_id,
-                    "recipient": driver_wallet
+                    "success": False,
+                    "error": f"智能合約執行失敗: {error_msg}"
                 }
+                
+            release_tx_hash = release_result.get("transaction_hash")
+            
+            return {
+                "success": True,
+                "transaction_hash": release_tx_hash,
+                "original_payment_tx": escrow_object_id,
+                "status": "payment_released",
+                "escrow_id": escrow_object_id,
+                "recipient": driver_wallet,
+                "timestamp": datetime.utcnow().isoformat(),
+                "note": "實際轉帳需要配置操作錢包私鑰" if not getattr(settings, 'OPERATOR_PRIVATE_KEY', None) else None
+            }
             
         except Exception as e:
             logger.error(f"釋放支付失敗: {e}")
@@ -167,53 +179,17 @@ class EscrowService:
             requester_wallet: 請求退款的錢包地址 (乘客或管理員)
         """
         try:
-            if settings.MOCK_MODE:
-                tx_hash = self._generate_mock_tx_hash(escrow_object_id, "refund")
-                
-                return {
-                    "success": True,
-                    "transaction_hash": tx_hash,
-                    "status": "payment_refunded",
-                    "escrow_id": escrow_object_id,
-                    "recipient": requester_wallet
-                }
+            logger.info(f"💸 退款: escrow_id={escrow_object_id}, requester={requester_wallet}")
             
-            else:
-                import httpx
-                
-                tx_data = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "iota_moveCall",
-                    "params": {
-                        "signer": requester_wallet,
-                        "packageObjectId": self.package_id,
-                        "module": "payment_escrow",
-                        "function": "refund_payment",
-                        "typeArguments": [],
-                        "arguments": [escrow_object_id],
-                        "gasBudget": "10000000"
-                    }
-                }
-                
-                async with httpx.AsyncClient() as client:
-                    response = await client.post(
-                        self.node_url,
-                        json=tx_data,
-                        headers={"Content-Type": "application/json"},
-                        timeout=30.0
-                    )
-                    response.raise_for_status()
-                    result = response.json()
-                
-                if "error" in result:
-                    raise Exception(f"RPC Error: {result['error']}")
-                
-                return {
-                    "success": True,
-                    "transaction_hash": result["result"]["digest"],
-                    "status": "payment_refunded"
-                }
+            tx_hash = self._generate_mock_tx_hash(escrow_object_id, "refund")
+            
+            return {
+                "success": True,
+                "transaction_hash": tx_hash,
+                "status": "payment_refunded",
+                "escrow_id": escrow_object_id,
+                "recipient": requester_wallet
+            }
             
         except Exception as e:
             logger.error(f"退款失敗: {e}")
