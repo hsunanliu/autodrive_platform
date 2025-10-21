@@ -81,3 +81,28 @@ flutter_export_environment.sh
 *.njsproj
 *.sln
 *.sw?
+
+# Kiro IDE
+.kiro/
+
+# 資料庫檔案
+*.db
+*.sqlite
+*.sqlite3
+
+# 臨時 SQL 檔案
+backend/add_wallet_fields.sql
+backend/find_driver.py
+
+# Flutter 開發工具
+mobile/devtools_options.yaml
+mobile/web/
+
+# 舊的服務檔案（已棄用）
+mobile/lib/services/old_*.dart
+mobile/lib/services/wallet_connect_service.dart
+mobile/lib/services/sui_wallet_connector.dart
+mobile/lib/services/sui_contract_service.dart
+mobile/lib/services/geocoding_service.dart
+mobile/lib/services/google_directions_service.dart
+
