@@ -1,8 +1,8 @@
 module decentralized_ride::events {
     use std::string::String;
-    use iota::object::ID;
-    use iota::tx_context::{Self, TxContext};
-    use iota::event;
+    use sui::object::ID;
+    use sui::tx_context::{Self, TxContext};
+    use sui::event;
     
     // ============================================================================
     // 簡化的事件結構 (Simplified Event Structures)

@@ -1,18 +1,11 @@
 [package]
-name        = "decentralized_ride"
-version     = "0.1.0"
-edition     = "2024"
-license     = "Apache-2.0"
-authors     = ["AutoDrive Team"]
+name = "autodrive"
+version = "0.0.1"
+edition = "2024.beta"
 
 [dependencies]
-Iota = { git = "https://github.com/iotaledger/iota.git", subdir = "crates/iota-framework/packages/iota-framework", rev = "framework/testnet" }
-
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
 
 [addresses]
+autodrive = "0x0"
 decentralized_ride = "0x0"
-iota          = "0x2"
-std           = "0x1"
-admin         = "0x0000000000000001"
-alice         = "0x0000000000000002"
-bob           = "0x0000000000000003"

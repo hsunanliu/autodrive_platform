@@ -1,8 +1,8 @@
 module decentralized_ride::trip_receipt {
     use std::string::String;
-    use iota::object::{Self, UID};
-    use iota::tx_context::{Self, TxContext};
-    use iota::transfer;
+    use sui::object::{Self, UID};
+    use sui::tx_context::{Self, TxContext};
+    use sui::transfer;
 
     /// 行程收據 - 不可篡改的證明
     public struct TripReceipt has key, store {

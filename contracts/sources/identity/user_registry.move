@@ -1,8 +1,8 @@
 module decentralized_ride::user_registry {
     use std::string::String;
-    use iota::object::{Self, UID, ID};
-    use iota::tx_context::{Self, TxContext};
-    use iota::transfer;
+    use sui::object::{Self, UID, ID};
+    use sui::tx_context::{Self, TxContext};
+    use sui::transfer;
     use decentralized_ride::constants;
     use decentralized_ride::events;
     
