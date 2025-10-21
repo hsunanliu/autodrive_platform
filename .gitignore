@@ -31,8 +31,16 @@ alembic/versions/*   # 若需要版本控制，可排除此行
 # Docker
 # ----------------------------------------
 docker-compose.override.yml
-*.log
 docker-compose.*.yml
+
+# ----------------------------------------
+# 日誌檔案
+# ----------------------------------------
+*.log
+logs/*.log
+logs/*.txt
+logs/error_report_*
+!logs/.gitkeep
 
 # ----------------------------------------
 # Node / JavaScript
