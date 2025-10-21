@@ -3,9 +3,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
+import os
 
 # 設置日誌
-logging.basicConfig(level=logging.INFO)
+from app.core.logging_config import setup_logging
+
+log_level = os.getenv("LOG_LEVEL", "INFO")
+log_to_file = os.getenv("LOG_TO_FILE", "true").lower() == "true"
+setup_logging(log_level=log_level, log_to_file=log_to_file)
+
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
@@ -56,7 +62,13 @@ async def health_check():
 from app.api.v1 import users as users_v1
 from app.api.v1 import vehicles as vehicles_v1
 from app.api.v1 import trips as trips_v1
+from app.api.v1 import wallet as wallet_v1
+from app.api.v1 import payment_proxy
+from app.api.v1.admin import router as admin_router
 
 app.include_router(users_v1.router, prefix="/api/v1")
 app.include_router(vehicles_v1.router, prefix="/api/v1")
-app.include_router(trips_v1.router, prefix="/api/v1")    
+app.include_router(trips_v1.router, prefix="/api/v1")
+app.include_router(wallet_v1.router, prefix="/api/v1/wallet", tags=["wallet"])
+app.include_router(payment_proxy.router, prefix="/api/v1/payment", tags=["payment"])
+app.include_router(admin_router, prefix="/api/v1")
