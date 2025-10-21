@@ -4,57 +4,97 @@ import 'package:http/http.dart' as http;
 
 class ApiService {
   // 後端 API 基礎 URL
-  static const String baseUrl = 'http://localhost:8000/api/v1';
-  
+  // 在真實設備上測試時使用 Mac 的 IP
+  // 在模擬器上測試時改回 localhost
+  static const String baseUrl = 'http://192.168.66.54:8000/api/v1';
+
   // 存儲用戶 token
   static String? _token;
-  
+
   // 設置 token
   static void setToken(String token) {
     _token = token;
   }
-  
+
   static void clearToken() {
     _token = null;
   }
-  
+
   // 獲取 headers
   static Map<String, String> get _headers {
-    final headers = {
-      'Content-Type': 'application/json',
-    };
-    
+    final headers = {'Content-Type': 'application/json'};
+
     if (_token != null) {
       headers['Authorization'] = 'Bearer $_token';
+      print('使用 Token: ${_token!.substring(0, 20)}...');
+    } else {
+      print('警告：沒有 Token！');
     }
-    
+
     return headers;
   }
-  
+
   static Map<String, dynamic> _wrapResponse(http.Response response) {
     dynamic data;
     try {
       data = response.body.isNotEmpty ? jsonDecode(response.body) : null;
     } catch (e) {
-      data = {'raw': response.body, 'parseError': e.toString()};
+      // 如果無法解析 JSON，保存原始響應
+      data = {
+        'raw': response.body,
+        'parseError': e.toString(),
+        'statusCode': response.statusCode,
+      };
+    }
+
+    // 檢查 HTTP 狀態碼
+    final httpSuccess = response.statusCode >= 200 && response.statusCode < 300;
+    
+    // 如果響應體中有 success 字段，優先使用它
+    bool finalSuccess = httpSuccess;
+    if (data is Map && data.containsKey('success')) {
+      finalSuccess = data['success'] == true;
+    }
+
+    // 如果是 500 錯誤且無法解析 JSON，添加更多信息
+    if (response.statusCode == 500 &&
+        data is Map &&
+        data.containsKey('parseError')) {
+      data['message'] = '後端服務器錯誤，請檢查後端日誌';
+    }
+
+    // 如果響應體中有 error 字段，提取它
+    String? error;
+    if (data is Map) {
+      error = data['error']?.toString() ?? data['message']?.toString();
     }
 
     return {
-      'success': response.statusCode >= 200 && response.statusCode < 300,
+      'success': finalSuccess,
       'data': data,
+      'error': error,
       'statusCode': response.statusCode,
     };
   }
 
-  static Future<Map<String, dynamic>> _handleRequest(Future<http.Response> Function() request) async {
+  static Future<Map<String, dynamic>> _handleRequest(
+    Future<http.Response> Function() request,
+  ) async {
     try {
       final response = await request();
-      return _wrapResponse(response);
+      final result = _wrapResponse(response);
+
+      // 添加詳細日誌
+      if (result['success'] != true) {
+        print('API 請求失敗:');
+        print('  狀態碼: ${result['statusCode']}');
+        print('  響應: ${result['data']}');
+      }
+
+      return result;
     } catch (e) {
-      return {
-        'success': false,
-        'error': e.toString(),
-      };
+      print('API 請求異常: $e');
+      return {'success': false, 'error': e.toString()};
     }
   }
 
@@ -84,7 +124,7 @@ class ApiService {
       );
     });
   }
-  
+
   // 用戶登入
   static Future<Map<String, dynamic>> loginUser({
     required String identifier,
@@ -94,18 +134,22 @@ class ApiService {
       return http.post(
         Uri.parse('$baseUrl/users/login'),
         headers: _headers,
-        body: jsonEncode({
-          'identifier': identifier,
-          'password': password,
-        }),
+        body: jsonEncode({'identifier': identifier, 'password': password}),
       );
     });
 
     if (result['success'] == true) {
       final data = result['data'];
       if (data is Map && data['access_token'] is String) {
-        setToken(data['access_token']);
+        final token = data['access_token'] as String;
+        setToken(token);
+        print('登入成功，Token 已設置: ${token.substring(0, 20)}...');
+      } else {
+        print('警告：登入成功但沒有 access_token');
+        print('響應數據: $data');
       }
+    } else {
+      print('登入失敗: ${result['data']}');
     }
 
     return result;
@@ -113,13 +157,20 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getUserProfile(int userId) async {
     return _handleRequest(() {
+      return http.get(Uri.parse('$baseUrl/users/$userId'), headers: _headers);
+    });
+  }
+
+  // 檢查用戶名是否可用
+  static Future<Map<String, dynamic>> checkUsername(String username) async {
+    return _handleRequest(() {
       return http.get(
-        Uri.parse('$baseUrl/users/$userId'),
+        Uri.parse('$baseUrl/users/check-username/$username'),
         headers: _headers,
       );
     });
   }
-  
+
   // 獲取附近可用車輛
   static Future<Map<String, dynamic>> getAvailableVehicles({
     required double lat,
@@ -138,7 +189,7 @@ class ApiService {
 
     return _handleRequest(() => http.get(uri, headers: _headers));
   }
-  
+
   // 創建行程請求
   static Future<Map<String, dynamic>> createTripRequest({
     required double pickupLat,
@@ -169,7 +220,7 @@ class ApiService {
       );
     });
   }
-  
+
   // 獲取行程預估
   static Future<Map<String, dynamic>> getTripEstimate({
     required double pickupLat,
@@ -188,7 +239,7 @@ class ApiService {
 
     return _handleRequest(() => http.post(uri, headers: _headers));
   }
-  
+
   // 獲取用戶行程列表
   static Future<Map<String, dynamic>> getUserTrips({
     String? status,
@@ -204,29 +255,68 @@ class ApiService {
       queryParams['status'] = status;
     }
 
-    final uri = Uri.parse('$baseUrl/trips/').replace(
-      queryParameters: queryParams,
-    );
+    final uri = Uri.parse(
+      '$baseUrl/trips/',
+    ).replace(queryParameters: queryParams);
 
     return _handleRequest(() => http.get(uri, headers: _headers));
   }
-  
-  // 獲取錢包餘額
-  static Future<Map<String, dynamic>> getWalletBalance() async {
+
+  // ============================================================================
+  // 錢包 API
+  // ============================================================================
+
+  // 創建錢包
+  static Future<Map<String, dynamic>> createWallet({
+    required String password,
+  }) async {
     return _handleRequest(() {
-      return http.get(
-        Uri.parse('$baseUrl/trips/payment/wallet/balance'),
+      return http.post(
+        Uri.parse('$baseUrl/wallet/create'),
         headers: _headers,
+        body: jsonEncode({'password': password}),
       );
     });
   }
-  
-  // 獲取交易狀態
-  static Future<Map<String, dynamic>> getTransactionStatus(String txHash) async {
+
+  // 導入錢包
+  static Future<Map<String, dynamic>> importWallet({
+    required String mnemonic,
+    required String password,
+  }) async {
     return _handleRequest(() {
-      return http.get(
-        Uri.parse('$baseUrl/trips/payment/transaction/$txHash'),
+      return http.post(
+        Uri.parse('$baseUrl/wallet/import'),
         headers: _headers,
+        body: jsonEncode({'mnemonic': mnemonic, 'password': password}),
+      );
+    });
+  }
+
+  // 獲取錢包餘額
+  static Future<Map<String, dynamic>> getWalletBalance() async {
+    return _handleRequest(() {
+      return http.get(Uri.parse('$baseUrl/wallet/balance'), headers: _headers);
+    });
+  }
+
+  // 獲取錢包信息
+  static Future<Map<String, dynamic>> getWalletInfo() async {
+    return _handleRequest(() {
+      return http.get(Uri.parse('$baseUrl/wallet/info'), headers: _headers);
+    });
+  }
+
+  // 簽署交易
+  static Future<Map<String, dynamic>> signTransaction({
+    required String password,
+    required Map<String, dynamic> transaction,
+  }) async {
+    return _handleRequest(() {
+      return http.post(
+        Uri.parse('$baseUrl/wallet/sign-transaction'),
+        headers: _headers,
+        body: jsonEncode({'password': password, 'transaction': transaction}),
       );
     });
   }
@@ -263,10 +353,7 @@ class ApiService {
 
   static Future<Map<String, dynamic>> getMyVehicles() async {
     return _handleRequest(() {
-      return http.get(
-        Uri.parse('$baseUrl/vehicles/my'),
-        headers: _headers,
-      );
+      return http.get(Uri.parse('$baseUrl/vehicles/my'), headers: _headers);
     });
   }
 
@@ -276,9 +363,9 @@ class ApiService {
   }) async {
     return _handleRequest(() {
       return http.put(
-        Uri.parse('$baseUrl/vehicles/$vehicleId/status').replace(
-          queryParameters: {'status': status},
-        ),
+        Uri.parse(
+          '$baseUrl/vehicles/$vehicleId/status',
+        ).replace(queryParameters: {'status': status}),
         headers: _headers,
       );
     });
@@ -334,9 +421,99 @@ class ApiService {
       return http.put(
         Uri.parse('$baseUrl/trips/$tripId/cancel'),
         headers: _headers,
+        body: jsonEncode({'reason': reason, 'cancelled_by': cancelledBy}),
+      );
+    });
+  }
+
+  // 支付相關 API
+  static Future<Map<String, dynamic>> confirmPayment({
+    required int tripId,
+    required String escrowObjectId,
+  }) async {
+    return _handleRequest(() {
+      return http.post(
+        Uri.parse('$baseUrl/trips/$tripId/confirm-payment?escrow_object_id=$escrowObjectId'),
+        headers: _headers,
+      );
+    });
+  }
+
+  static Future<Map<String, dynamic>> verifyTripPayment({
+    required int tripId,
+    required String txHash,
+  }) async {
+    return _handleRequest(() {
+      return http.post(
+        Uri.parse('$baseUrl/trips/$tripId/verify-payment?tx_hash=$txHash'),
+        headers: _headers,
+      );
+    });
+  }
+
+  static Future<Map<String, dynamic>> getTransactionStatus(
+    String txHash,
+  ) async {
+    return _handleRequest(() {
+      return http.get(
+        Uri.parse('$baseUrl/trips/payment/transaction/$txHash'),
+        headers: _headers,
+      );
+    });
+  }
+
+  // 司機相關 API
+  static Future<Map<String, dynamic>> getAvailableTrips({
+    int limit = 10,
+    int offset = 0,
+  }) async {
+    return _handleRequest(() {
+      return http.get(
+        Uri.parse('$baseUrl/trips/available?limit=$limit&offset=$offset'),
+        headers: _headers,
+      );
+    });
+  }
+
+  // 獲取行程詳情
+  static Future<Map<String, dynamic>> getTripDetails(int tripId) async {
+    return _handleRequest(() {
+      return http.get(Uri.parse('$baseUrl/trips/$tripId'), headers: _headers);
+    });
+  }
+
+  // 司機接到乘客
+  static Future<Map<String, dynamic>> pickupPassenger(int tripId) async {
+    return _handleRequest(() {
+      return http.put(
+        Uri.parse('$baseUrl/trips/$tripId/pickup'),
+        headers: _headers,
+      );
+    });
+  }
+
+  // 獲取臨時託管地址
+  static Future<Map<String, dynamic>> getTempEscrowAddress() async {
+    return _handleRequest(() {
+      return http.get(
+        Uri.parse('$baseUrl/payment/temp-escrow-address'),
+        headers: _headers,
+      );
+    });
+  }
+
+  // 處理支付（後端代理調用智能合約）
+  static Future<Map<String, dynamic>> processPayment({
+    required int tripId,
+    required String txHash,
+  }) async {
+    return _handleRequest(() {
+      return http.post(
+        Uri.parse('$baseUrl/payment/process-payment'),
+        headers: _headers,
         body: jsonEncode({
-          'reason': reason,
-          'cancelled_by': cancelledBy,
+          'trip_id': tripId,
+          'tx_hash': txHash,
         }),
       );
     });
