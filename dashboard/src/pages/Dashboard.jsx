@@ -3,6 +3,7 @@ import Layout from '../components/Layout';
 import { dashboardAPI } from '../services/api';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { Users, Car, MapPin, TrendingUp, DollarSign, Calendar, ArrowUp, ArrowDown, CreditCard, Coins, RefreshCw } from 'lucide-react';
+import DualCurrencyDisplay from '../components/DualCurrencyDisplay';
 
 const Dashboard = () => {
   const [totals, setTotals] = useState(null);
@@ -32,6 +33,8 @@ const Dashboard = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
+      console.log('📊 開始載入 Dashboard 數據...');
+
       const [totalsRes, revenueRes, growthRes, paymentRes] = await Promise.all([
         dashboardAPI.getTotals(),
         dashboardAPI.getRevenue(revenueType),
@@ -39,13 +42,21 @@ const Dashboard = () => {
         dashboardAPI.getPaymentDistribution(),
       ]);
 
+      console.log('✅ API 數據載入成功');
       setTotals(totalsRes.data);
       setRevenueData(revenueRes.data);
       setGrowthData(growthRes.data);
       setPaymentData(paymentRes.data);
     } catch (error) {
-      console.error('獲取儀表板數據失敗:', error);
+      console.error('❌ 獲取儀表板數據失敗:', error);
+      console.error('錯誤詳情:', error.response?.data || error.message);
+      // 設置默認值避免頁面卡住
+      setTotals({ totalUsers: 0, totalDrivers: 0, totalVehicles: 0, totalTrips: 0, totalRevenue: 0 });
+      setRevenueData([]);
+      setGrowthData({ current: { trips: 0, revenue: 0 }, previous: { trips: 0, revenue: 0 }, growth: { trips: 0, revenue: 0 } });
+      setPaymentData({ data: [], totalAmount: 0 });
     } finally {
+      console.log('🏁 載入完成，設置 loading = false');
       setLoading(false);
     }
   };
@@ -93,7 +104,8 @@ const Dashboard = () => {
     },
     {
       title: '總營收',
-      value: totals.totalRevenue ? `${Number(totals.totalRevenue).toFixed(2)} SUI` : '0 SUI',
+      value: totals.totalRevenue || 0,
+      valueType: 'currency',
       icon: DollarSign,
       gradient: 'from-emerald-500 to-emerald-600',
       bgColor: '#ecfdf5',
@@ -188,7 +200,11 @@ const Dashboard = () => {
                       {kpi.title}
                     </p>
                     <p style={{ fontSize: '2rem', fontWeight: '900', color: '#0f172a', lineHeight: '1' }}>
-                      {kpi.value}
+                      {kpi.valueType === 'currency' ? (
+                        <DualCurrencyDisplay suiAmount={kpi.value} />
+                      ) : (
+                        kpi.value
+                      )}
                     </p>
                   </div>
                 </div>
@@ -336,13 +352,13 @@ const Dashboard = () => {
                   <div>
                     <p style={{ fontSize: '0.875rem', color: '#64748b', marginBottom: '0.25rem' }}>{growthData.current.label}</p>
                     <p style={{ fontSize: '2rem', fontWeight: '900', color: '#0f172a' }}>
-                      {Number(growthData.current.revenue).toFixed(4)} SUI
+                      <DualCurrencyDisplay suiAmount={Number(growthData.current.revenue)} />
                     </p>
                   </div>
                   <div style={{ textAlign: 'right' }}>
                     <p style={{ fontSize: '0.875rem', color: '#64748b', marginBottom: '0.25rem' }}>{growthData.previous.label}</p>
                     <p style={{ fontSize: '1.25rem', fontWeight: '700', color: '#64748b' }}>
-                      {Number(growthData.previous.revenue).toFixed(4)} SUI
+                      <DualCurrencyDisplay suiAmount={Number(growthData.previous.revenue)} />
                     </p>
                   </div>
                 </div>
@@ -482,7 +498,7 @@ const Dashboard = () => {
                   <div style={{ marginBottom: '1rem', padding: '1rem', background: '#f8fafc', borderRadius: '12px' }}>
                     <p style={{ fontSize: '0.875rem', color: '#64748b', fontWeight: '600', marginBottom: '0.25rem' }}>總金額</p>
                     <p style={{ fontSize: '1.75rem', fontWeight: '900', color: '#0f172a' }}>
-                      {Number(paymentData.totalAmount).toFixed(4)} SUI
+                      <DualCurrencyDisplay suiAmount={Number(paymentData.totalAmount)} />
                     </p>
                   </div>
 
@@ -514,7 +530,7 @@ const Dashboard = () => {
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <p style={{ fontSize: '1.125rem', fontWeight: '900', color: '#0f172a' }}>
-                          {Number(item.amount).toFixed(4)} SUI
+                          <DualCurrencyDisplay suiAmount={Number(item.amount)} />
                         </p>
                         <p style={{ fontSize: '0.875rem', color: '#64748b', fontWeight: '700' }}>
                           {item.percentage}%

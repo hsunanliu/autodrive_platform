@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'services/api_service.dart';
+import 'services/price_service.dart';
 import 'session_manager.dart';
 
 class DriverEarningsPage extends StatefulWidget {
@@ -47,19 +48,21 @@ class _DriverEarningsPageState extends State<DriverEarningsPage> {
       final vehicles = (result['data'] as List)
           .whereType<Map<String, dynamic>>()
           .toList(growable: false);
-      double total = 0;
+
+      // 計算總收益（micro SUI → SUI）
+      double totalMicroIota = 0;
       for (final v in vehicles) {
-        final value = v['total_earnings_micro_iota'];
+        final value = v['total_earnings_micro_sui'];
         if (value is num) {
-          total += value.toDouble();
+          totalMicroIota += value.toDouble();
         } else if (value is String) {
-          total += double.tryParse(value) ?? 0;
+          totalMicroIota += double.tryParse(value) ?? 0;
         }
       }
 
       setState(() {
         _vehicles = vehicles;
-        _totalEarnings = total / 1000000;
+        _totalEarnings = totalMicroIota / 1000000; // micro SUI -> SUI (1 SUI = 1,000,000 micro SUI)
         _isLoading = false;
       });
     } else {
@@ -112,12 +115,32 @@ class _DriverEarningsPageState extends State<DriverEarningsPage> {
               children: [
                 const Text('總收益',
                     style: TextStyle(color: Colors.white70, fontSize: 16)),
-                Text('${_totalEarnings.toStringAsFixed(2)} SUI',
-                    style: const TextStyle(
-                      color: Color(0xFF1DB954),
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                    )),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text('${_totalEarnings.toStringAsFixed(2)} SUI',
+                        style: const TextStyle(
+                          color: Color(0xFF1DB954),
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                        )),
+                    FutureBuilder<double?>(
+                      future: PriceService.convertSuiToUsd(_totalEarnings),
+                      builder: (context, snapshot) {
+                        if (snapshot.hasData && snapshot.data != null) {
+                          return Text(
+                            '≈ \$${snapshot.data!.toStringAsFixed(2)} USD',
+                            style: const TextStyle(
+                              color: Colors.white54,
+                              fontSize: 14,
+                            ),
+                          );
+                        }
+                        return const SizedBox.shrink();
+                      },
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -145,10 +168,16 @@ class _VehicleEarningTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final model = vehicle['model']?.toString() ?? '未命名車輛';
     final plate = vehicle['plate_number']?.toString() ?? '未設定';
-    final earnings = vehicle['total_earnings_micro_iota'];
-    final earningsIota = earnings is num
-        ? earnings / 1000000
-        : double.tryParse(earnings?.toString() ?? '') ?? 0;
+    final earnings = vehicle['total_earnings_micro_sui'];
+
+    // 統一處理：先轉換為數字（micro SUI），再除以 1000000 轉換為 SUI
+    double earningsMicroIota = 0;
+    if (earnings is num) {
+      earningsMicroIota = earnings.toDouble();
+    } else if (earnings is String) {
+      earningsMicroIota = double.tryParse(earnings) ?? 0;
+    }
+    final earningsSui = earningsMicroIota / 1000000; // micro SUI -> SUI (1 SUI = 1,000,000 micro SUI)
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -171,8 +200,28 @@ class _VehicleEarningTile extends StatelessWidget {
               ],
             ),
           ),
-          Text('${earningsIota.toStringAsFixed(2)} SUI',
-              style: const TextStyle(color: Color(0xFF1DB954), fontWeight: FontWeight.bold)),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text('${earningsSui.toStringAsFixed(2)} SUI',
+                  style: const TextStyle(color: Color(0xFF1DB954), fontWeight: FontWeight.bold)),
+              FutureBuilder<double?>(
+                future: PriceService.convertSuiToUsd(earningsSui),
+                builder: (context, snapshot) {
+                  if (snapshot.hasData && snapshot.data != null) {
+                    return Text(
+                      '≈ \$${snapshot.data!.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        color: Colors.white54,
+                        fontSize: 12,
+                      ),
+                    );
+                  }
+                  return const SizedBox.shrink();
+                },
+              ),
+            ],
+          ),
         ],
       ),
     );

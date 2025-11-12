@@ -6,6 +6,9 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../services/api_service.dart';
 import '../services/google_directions_service.dart';
+import '../services/websocket_service.dart';
+import '../services/trip_simulation_service.dart';
+import '../services/map_http_client.dart';
 import '../session_manager.dart';
 
 class TripInProgressPage extends StatefulWidget {
@@ -24,34 +27,99 @@ class TripInProgressPage extends StatefulWidget {
 
 class _TripInProgressPageState extends State<TripInProgressPage> {
   final MapController _mapController = MapController();
-  
+  final WebSocketService _ws = WebSocketService();
+  final TripSimulationService _simulationService = TripSimulationService();
+
   Map<String, dynamic>? _tripData;
   DirectionsResult? _directions;
   LatLng? _currentPosition;
-  
+
   bool _isLoading = true;
   String _status = 'accepted'; // accepted, picked_up, in_progress, completed
-  Timer? _simulationTimer;
   Timer? _pollTimer;
   int _currentPointIndex = 0;
-  
+
+  // 分離的狀態管理
+  bool _hasReachedDestination = false;  // 是否到達目的地
+  bool _paymentCompleted = false;  // 支付是否完成
+  bool _isCancelling = false;      // 是否正在取消行程（防止雙重 pop）
+
   @override
   void initState() {
     super.initState();
     _loadTripData();
-    // 每 10 秒輪詢一次行程狀態（檢測支付狀態變化）
-    _pollTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      if (mounted && _status != 'completed') {
-        _loadTripData();
-      }
-    });
+    _setupWebSocket();
+
+    // 如果有正在進行的模擬，在載入完成後嘗試恢復
+    if (_simulationService.isSimulatingTrip(widget.tripId)) {
+      print('♻️ 檢測到現有模擬，將在載入路線後恢復');
+    }
   }
 
   @override
   void dispose() {
-    _simulationTimer?.cancel();
+    // 暫停模擬（不清除狀態，以便恢復）
+    _simulationService.pauseSimulation();
+
+    // 停止輪詢計時器
     _pollTimer?.cancel();
+    _pollTimer = null;
+
+    // 清理 WebSocket 監聽器
+    _ws.off('payment_completed');
+    _ws.off('trip_cancelled');
+
+    // 釋放 MapController
+    _mapController.dispose();
+
     super.dispose();
+    print('🗑️ TripInProgressPage disposed (模擬已暫停)');
+  }
+
+  /// 設置 WebSocket 監聽支付完成事件
+  void _setupWebSocket() {
+    // 監聽支付完成 - 只更新支付狀態，不影響模擬
+    _ws.on('payment_completed', (data) {
+      print('📨 收到支付完成通知: $data');
+      if (mounted) {
+        setState(() {
+          _paymentCompleted = true;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ 乘客已完成支付'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    });
+
+    // 監聽行程取消
+    _ws.on('trip_cancelled', (data) {
+      print('📨 收到行程取消通知: $data');
+      if (mounted && !_isCancelling) {
+        // 只有在不是自己主動取消時才處理（避免雙重 pop）
+        _simulationService.stopSimulation(); // 停止並清除模擬
+
+        final cancelledBy = data['cancelled_by'] ?? 'unknown';
+        final reason = data['reason'] ?? '未提供原因';
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              cancelledBy == 'passenger'
+                  ? '❌ 乘客取消了行程\n原因：$reason'
+                  : '✓ 行程已取消',
+            ),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+
+        Navigator.pop(context); // 返回上一頁
+      }
+    });
   }
 
   Future<void> _loadTripData() async {
@@ -67,14 +135,22 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
     if (result['success'] == true && result['data'] is Map) {
       final trip = result['data'] as Map<String, dynamic>;
       print('✅ 找到行程: ${trip['trip_id']}, 狀態: ${trip['status']}');
-      
+
+      final newStatus = trip['status'] ?? 'accepted';
+      final shouldReloadDirections = _tripData == null; // 只在第一次載入時獲取路線
+
       setState(() {
         _tripData = trip;
-        _status = trip['status'] ?? 'accepted';
+        _status = newStatus;
       });
 
-      // 獲取路線
-      await _loadDirections();
+      // 只在第一次載入時獲取路線，避免重複呼叫 Google API
+      if (shouldReloadDirections) {
+        print('📍 首次載入，獲取導航路線...');
+        await _loadDirections();
+      } else {
+        print('♻️ 更新行程狀態，跳過路線重載');
+      }
     } else {
       print('❌ 獲取行程失敗: ${result['error']}');
       setState(() => _isLoading = false);
@@ -114,37 +190,76 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
     final origin = LatLng(pickupLat, pickupLng);
     final destination = LatLng(dropoffLat, dropoffLng);
 
-    print('🗺️ 正在獲取路線...');
-    final directions = await GoogleDirectionsService.getDirections(
-      origin: origin,
-      destination: destination,
-    );
+    print('🗺️ 正在從後端獲取路線...');
 
-    if (!mounted) return;
+    try {
+      // 使用後端 API 獲取路線（支持多停靠點）
+      final result = await ApiService.getTripRoute(widget.tripId);
 
-    if (directions != null) {
-      print('✅ 路線獲取成功: ${directions.polylinePoints.length} 個點');
-      setState(() {
-        _directions = directions;
-        _currentPosition = directions.polylinePoints.first;
-      });
+      if (!mounted) return;
 
-      // 等待下一幀再移動地圖（確保 MapController 已初始化）
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          try {
-            _mapController.move(origin, 14);
-          } catch (e) {
-            print('⚠️ 移動地圖失敗: $e');
-          }
+      if (result['success'] == true && result['route_points'] != null) {
+        final routePointsData = result['route_points'] as List;
+        final routePoints = routePointsData
+            .map((p) => LatLng(p['lat'] as double, p['lng'] as double))
+            .toList();
+
+        print('✅ 路線獲取成功: ${routePoints.length} 個路線點');
+
+        // 獲取停靠點資訊（如果有）
+        final waypointsData = result['waypoints'] as List?;
+        if (waypointsData != null && waypointsData.isNotEmpty) {
+          print('📍 包含 ${waypointsData.length} 個停靠點');
         }
-      });
-    } else {
-      print('❌ 路線獲取失敗');
+
+        // 創建 DirectionsResult 對象（保持與現有模擬服務的兼容性）
+        final distanceMeters = (result['distance_meters'] ?? 0).toDouble();
+        final durationSeconds = (result['duration_seconds'] ?? 0).toInt();
+
+        // 格式化距離和時間文字
+        final distanceKm = distanceMeters / 1000;
+        final distanceText = '${distanceKm.toStringAsFixed(1)} 公里';
+        final durationMinutes = (durationSeconds / 60).round();
+        final durationText = '$durationMinutes 分鐘';
+
+        final mockDirections = DirectionsResult(
+          polylinePoints: routePoints,
+          distanceMeters: distanceMeters,
+          durationSeconds: durationSeconds,
+          distanceText: distanceText,
+          durationText: durationText,
+        );
+
+        setState(() {
+          _directions = mockDirections;
+          _currentPosition = routePoints.first;
+        });
+
+        // 等待下一幀再移動地圖（確保 MapController 已初始化）
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            try {
+              _mapController.move(origin, 14);
+            } catch (e) {
+              print('⚠️ 移動地圖失敗: $e');
+            }
+
+            // 如果已有此行程的模擬正在進行，自動恢復
+            if (_simulationService.isSimulatingTrip(widget.tripId)) {
+              print('♻️ 自動恢復行程模擬');
+              _resumeSimulation();
+            }
+          }
+        });
+      } else {
+        throw Exception(result['error'] ?? '未知錯誤');
+      }
+    } catch (e) {
+      print('❌ 路線獲取失敗: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('無法獲取路線，請檢查網路連接'),
+          SnackBar(
+            content: Text('無法獲取路線: $e'),
             backgroundColor: Colors.orange,
           ),
         );
@@ -152,40 +267,129 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
     }
   }
 
+  /// 開始位置模擬（視覺層 - 使用全局服務）
   void _startSimulation() {
-    if (_directions == null || _simulationTimer != null) return;
+    if (_directions == null) return;
 
     final points = _directions!.polylinePoints;
     final totalPoints = points.length;
     final durationSeconds = _directions!.durationSeconds;
-    final intervalMs = (durationSeconds * 1000 / totalPoints).round();
 
-    _currentPointIndex = 0;
+    // 🚀 加速模擬：設定速度倍數（例如 10 倍速）
+    const speedMultiplier = 10.0; // 調整這個數字來改變速度
+    final intervalMs = (durationSeconds * 1000 / totalPoints / speedMultiplier).round();
 
-    _simulationTimer = Timer.periodic(
-      Duration(milliseconds: intervalMs),
-      (timer) {
-        if (_currentPointIndex >= totalPoints - 1) {
-          timer.cancel();
-          _simulationTimer = null;
-          // 自動完成行程
-          if (_status == 'in_progress') {
-            _completeTrip();
-          }
-          return;
-        }
+    // 檢查是否已有此行程的模擬在運行
+    if (_simulationService.isSimulatingTrip(widget.tripId)) {
+      print('♻️ 行程模擬已在運行，嘗試恢復...');
+      _resumeSimulation();
+      return;
+    }
+
+    setState(() {
+      _hasReachedDestination = false;
+    });
+
+    print('🚗 開始位置模擬 (${totalPoints} 個點, 間隔 ${intervalMs}ms, ${speedMultiplier}x 速度)');
+
+    _simulationService.startSimulation(
+      tripId: widget.tripId,
+      routePoints: points,
+      intervalMs: intervalMs,
+      onPositionUpdate: (position, index) {
+        if (!mounted) return;
 
         setState(() {
-          _currentPointIndex++;
-          _currentPosition = points[_currentPointIndex];
+          _currentPointIndex = index;
+          _currentPosition = position;
         });
 
         // 移動地圖跟隨車輛
         try {
-          _mapController.move(_currentPosition!, _mapController.camera.zoom);
+          _mapController.move(position, _mapController.camera.zoom);
         } catch (e) {
           // 忽略地圖移動錯誤
+          print('⚠️ 地圖移動錯誤: $e');
         }
+
+        // 🔄 發送位置更新給乘客端（通過 WebSocket）
+        _ws.emit('update_location', {
+          'trip_id': widget.tripId,
+          'lat': position.latitude,
+          'lng': position.longitude,
+        });
+      },
+      onDestinationReached: () {
+        if (!mounted) return;
+
+        setState(() {
+          _hasReachedDestination = true;
+        });
+
+        print('🏁 已到達目的地，等待支付完成...');
+
+        // 顯示通知
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _paymentCompleted
+                ? '✅ 已到達目的地，支付已完成，可結束行程'
+                : '⏳ 已到達目的地，等待乘客支付...'
+            ),
+            backgroundColor: _paymentCompleted ? Colors.green : Colors.orange,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 恢復位置模擬（從上次位置繼續）
+  void _resumeSimulation() {
+    _simulationService.resumeSimulation(
+      tripId: widget.tripId,
+      onPositionUpdate: (position, index) {
+        if (!mounted) return;
+
+        setState(() {
+          _currentPointIndex = index;
+          _currentPosition = position;
+        });
+
+        // 移動地圖跟隨車輛
+        try {
+          _mapController.move(position, _mapController.camera.zoom);
+        } catch (e) {
+          print('⚠️ 地圖移動錯誤: $e');
+        }
+
+        // 🔄 發送位置更新給乘客端（通過 WebSocket）
+        _ws.emit('update_location', {
+          'trip_id': widget.tripId,
+          'lat': position.latitude,
+          'lng': position.longitude,
+        });
+      },
+      onDestinationReached: () {
+        if (!mounted) return;
+
+        setState(() {
+          _hasReachedDestination = true;
+        });
+
+        print('🏁 已到達目的地');
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _paymentCompleted
+                ? '✅ 已到達目的地，支付已完成，可結束行程'
+                : '⏳ 已到達目的地，等待乘客支付...'
+            ),
+            backgroundColor: _paymentCompleted ? Colors.green : Colors.orange,
+            duration: const Duration(seconds: 3),
+          ),
+        );
       },
     );
   }
@@ -225,7 +429,138 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
     }
   }
 
+  /// 顯示取消行程對話框
+  Future<void> _showCancelDialog() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        String selectedReason = '臨時有事';
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1E1E1E),
+              title: const Text(
+                '確定要取消行程嗎？',
+                style: TextStyle(color: Colors.white),
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '請選擇取消原因：',
+                    style: TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
+                  const SizedBox(height: 12),
+                  ...['臨時有事', '乘客要求取消', '路況問題', '車輛故障', '其他原因'].map((reason) {
+                    return RadioListTile<String>(
+                      value: reason,
+                      groupValue: selectedReason,
+                      title: Text(
+                        reason,
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                      ),
+                      activeColor: const Color(0xFF1DB954),
+                      onChanged: (value) {
+                        setState(() {
+                          selectedReason = value!;
+                        });
+                      },
+                    );
+                  }).toList(),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('返回'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, selectedReason),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                  child: const Text('確定取消'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result != null) {
+      await _cancelTrip(result);
+    }
+  }
+
+  /// 取消行程
+  Future<void> _cancelTrip(String reason) async {
+    // 設置標記，防止 WebSocket 通知導致雙重 pop
+    setState(() {
+      _isLoading = true;
+      _isCancelling = true;
+    });
+
+    final result = await ApiService.cancelTrip(
+      tripId: widget.tripId,
+      reason: reason,
+      cancelledBy: 'driver',
+    );
+
+    if (!mounted) return;
+
+    setState(() => _isLoading = false);
+
+    if (result['success'] == true) {
+      _simulationService.stopSimulation(); // 停止並清除模擬
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ 行程已取消'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      // 返回上一頁
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } else {
+      // 取消失敗，重置標記
+      setState(() => _isCancelling = false);
+      final errorMsg = result['error']?.toString() ?? '未知錯誤';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ 取消失敗: $errorMsg'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  /// 完成行程（業務層 - 需要支付完成）
   Future<void> _completeTrip() async {
+    // 檢查必要條件
+    if (!_hasReachedDestination) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⚠️ 尚未到達目的地'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // 檢查支付狀態：優先使用 escrow_object_id（與 UI 一致）
+    final hasEscrow = _tripData?['escrow_object_id'] != null;
+    if (!hasEscrow) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⏳ 請等待乘客完成支付'),
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     final result = await ApiService.completeTrip(widget.tripId);
@@ -235,6 +570,7 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
     setState(() => _isLoading = false);
 
     if (result['success'] == true) {
+      _simulationService.stopSimulation(); // 確保停止並清除模擬
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('🎉 行程已完成！款項已轉給司機'),
@@ -242,15 +578,16 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
           duration: Duration(seconds: 3),
         ),
       );
-      // 返回司機主頁
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      // 返回司機主頁（只 pop 一次，回到 DriverHomePageNew）
+      Navigator.of(context).pop();
     } else {
       final errorMsg = result['error']?.toString() ?? '未知錯誤';
-      
+
       // 特殊處理支付相關錯誤
       String displayMsg;
       if (errorMsg.contains('尚未支付')) {
         displayMsg = '❌ 乘客尚未支付，無法完成行程';
+        setState(() => _paymentCompleted = false); // 重置支付狀態
       } else if (errorMsg.contains('託管記錄')) {
         displayMsg = '❌ 找不到支付記錄，請聯繫客服';
       } else if (errorMsg.contains('支付釋放失敗')) {
@@ -258,7 +595,7 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
       } else {
         displayMsg = '❌ 完成失敗: $errorMsg';
       }
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(displayMsg),
@@ -278,17 +615,30 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
       );
     }
 
-    return Scaffold(
-      backgroundColor: const Color(0xFF121212),
-      appBar: AppBar(
-        title: Text('行程 #${widget.tripId}'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadTripData,
+    return WillPopScope(
+      onWillPop: () async {
+        // 暫停模擬（不清除狀態）
+        _simulationService.pauseSimulation();
+        return true;
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF121212),
+        appBar: AppBar(
+          title: Text('行程 #${widget.tripId}'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              _simulationService.pauseSimulation(); // 暫停而非停止
+              Navigator.pop(context);
+            },
           ),
-        ],
-      ),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _loadTripData,
+            ),
+          ],
+        ),
       body: Column(
         children: [
           // 地圖
@@ -298,6 +648,7 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
           // 底部信息面板
           _buildBottomPanel(),
         ],
+      ),
       ),
     );
   }
@@ -325,6 +676,7 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
           urlTemplate:
               'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=pk.eyJ1IjoiaHkxaWlpIiwiYSI6ImNtZW4wcHdraDB3a3Mya3Nlc29mNGY3ZHAifQ.c1EtA8uDOpR7Q2-uPVJSaA',
           userAgentPackageName: 'com.autodrive.driver',
+          // 使用默認的 NetworkTileProvider，不傳遞 httpClient
         ),
         // 路線
         PolylineLayer(
@@ -350,6 +702,46 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
                 size: 40,
               ),
             ),
+            // 停靠點標記
+            if (_tripData?['waypoints'] != null)
+              ...((_tripData!['waypoints'] as List).map((waypoint) {
+                final wpLat = waypoint['lat'] as double;
+                final wpLng = waypoint['lng'] as double;
+                final sequence = waypoint['sequence'] as int;
+
+                return Marker(
+                  point: LatLng(wpLat, wpLng),
+                  width: 40,
+                  height: 40,
+                  child: Column(
+                    children: [
+                      Container(
+                        width: 24,
+                        height: 24,
+                        decoration: const BoxDecoration(
+                          color: Colors.orange,
+                          shape: BoxShape.circle,
+                        ),
+                        child: Center(
+                          child: Text(
+                            '$sequence',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const Icon(
+                        Icons.location_on,
+                        color: Colors.orange,
+                        size: 16,
+                      ),
+                    ],
+                  ),
+                );
+              }).toList()),
             // 終點
             Marker(
               point: LatLng(dropoffLat, dropoffLng),
@@ -373,7 +765,7 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.blue.withOpacity(0.5),
+                        color: Colors.blue.withValues(alpha: 0.5),
                         blurRadius: 10,
                         spreadRadius: 2,
                       ),
@@ -616,6 +1008,26 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
             ),
           ),
         ),
+        // 取消行程按鈕（行程未完成時顯示）
+        if (_status != 'completed' && _status != 'cancelled') ...[
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _showCancelDialog,
+              icon: const Icon(Icons.cancel, size: 20),
+              label: const Text('取消行程'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.red,
+                side: const BorderSide(color: Colors.red),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }

@@ -63,6 +63,128 @@ class _ProfilePageState extends State<ProfilePage> {
     Navigator.pushNamedAndRemoveUntil(context, '/role_select', (route) => false);
   }
 
+  Future<void> _showEditDialog() async {
+    if (_session == null || _profile == null) return;
+
+    final displayNameController = TextEditingController(
+      text: _profile!['display_name'] ?? '',
+    );
+    final emailController = TextEditingController(
+      text: _profile!['email'] ?? '',
+    );
+    final phoneController = TextEditingController(
+      text: _profile!['phone_number'] ?? '',
+    );
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text(
+          '編輯個人資料',
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: displayNameController,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: '顯示名稱',
+                  labelStyle: TextStyle(color: Colors.white70),
+                  hintText: '輸入您的顯示名稱',
+                  hintStyle: TextStyle(color: Colors.white38),
+                  enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white38),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: emailController,
+                keyboardType: TextInputType.emailAddress,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: '電子郵件',
+                  labelStyle: TextStyle(color: Colors.white70),
+                  hintText: 'example@email.com',
+                  hintStyle: TextStyle(color: Colors.white38),
+                  enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white38),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: phoneController,
+                keyboardType: TextInputType.phone,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: '手機號碼',
+                  labelStyle: TextStyle(color: Colors.white70),
+                  hintText: '0912345678',
+                  hintStyle: TextStyle(color: Colors.white38),
+                  enabledBorder: UnderlineInputBorder(
+                    borderSide: BorderSide(color: Colors.white38),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消', style: TextStyle(color: Colors.white70)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final displayName = displayNameController.text.trim();
+              final email = emailController.text.trim();
+              final phone = phoneController.text.trim();
+
+              final updateResult = await ApiService.updateUserProfile(
+                userId: _session!.userId,
+                displayName: displayName.isEmpty ? null : displayName,
+                email: email.isEmpty ? null : email,
+                phone: phone.isEmpty ? null : phone,
+              );
+
+              if (!mounted) return;
+
+              if (updateResult['success'] == true) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('✅ 個人資料已更新'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+                Navigator.pop(context, true);
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('❌ 更新失敗: ${updateResult['error'] ?? '未知錯誤'}'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1DB954),
+            ),
+            child: const Text('儲存'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true) {
+      _loadProfile(); // 重新載入個人資料
+    }
+  }
+
   void _openEarnings() {
     Navigator.push(
       context,
@@ -77,6 +199,11 @@ class _ProfilePageState extends State<ProfilePage> {
       appBar: AppBar(
         title: const Text('個人檔案'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.edit),
+            onPressed: _isLoading || _profile == null ? null : _showEditDialog,
+            tooltip: '編輯個人資料',
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _isLoading ? null : _loadProfile,

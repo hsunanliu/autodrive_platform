@@ -124,7 +124,7 @@ class _PaymentDialogState extends State<PaymentDialog> {
                   const SizedBox(height: 8),
                   const Text(
                     '1. 點擊「確認支付」\n'
-                    '2. 將打開 Suiet Wallet\n'
+                    '2. 將打開 Slush Wallet\n'
                     '3. 在錢包中確認交易\n'
                     '4. 資金將鎖定在智能合約中',
                     style: TextStyle(fontSize: 12, color: Colors.white70),

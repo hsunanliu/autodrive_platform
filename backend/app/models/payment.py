@@ -141,10 +141,10 @@ class PaymentTransaction(Base):
         comment="交易金額（台幣）"
     )
     
-    amount_micro_iota = Column(
+    amount_micro_sui = Column(
         String(50),
         nullable=True,
-        comment="IOTA金額（micro IOTA）"
+        comment="SUI金額（micro SUI）"
     )
     
     service_fee = Column(

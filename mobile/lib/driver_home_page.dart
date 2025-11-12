@@ -5,8 +5,10 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import 'services/api_service.dart';
+import 'services/websocket_service.dart';
 import 'session_manager.dart';
 import 'trip_history_page.dart';
+import 'pages/trip_in_progress_page.dart';
 
 class DriverHomePage extends StatefulWidget {
   const DriverHomePage({super.key, required this.session});
@@ -26,6 +28,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
   double _totalEarnings = 0;
   Timer? _pollTimer;
   String? _statusMessage;
+  Map<String, dynamic>? _activeTrip; // 進行中的行程
 
   UserSession? get _session => widget.session;
 
@@ -33,16 +36,51 @@ class _DriverHomePageState extends State<DriverHomePage> {
   void initState() {
     super.initState();
     _refreshData(initial: true);
-    _pollTimer = Timer.periodic(const Duration(seconds: 12), (_) {
-      if (mounted) {
-        _refreshData();
-      }
+    _initializeWebSocket();
+    // ✅ 已移除輪詢 - 改用 WebSocket 實時通知
+  }
+
+  /// 初始化 WebSocket 連接並設置監聽
+  Future<void> _initializeWebSocket() async {
+    final ws = WebSocketService();
+
+    // 確保 WebSocket 已連接
+    if (!ws.isConnected) {
+      print('🔌 司機端初始化 WebSocket 連接...');
+      await ws.connect();
+    }
+
+    // 監聽行程狀態更新
+    ws.on('trip_cancelled', (data) {
+      print('📨 收到行程取消通知: $data');
+      if (!mounted) return;
+      _refreshData();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('行程 ${data['trip_id']} 已被取消'),
+          backgroundColor: Colors.orange,
+        ),
+      );
     });
+
+    ws.on('trip_completed', (data) {
+      print('📨 收到行程完成通知: $data');
+      if (!mounted) return;
+      _refreshData();
+    });
+
+    print('✅ 司機端（舊版）WebSocket 監聽已設置');
   }
 
   @override
   void dispose() {
     _pollTimer?.cancel();
+
+    // 清理 WebSocket 監聽器
+    final ws = WebSocketService();
+    ws.off('trip_cancelled');
+    ws.off('trip_completed');
+
     super.dispose();
   }
 
@@ -55,29 +93,44 @@ class _DriverHomePageState extends State<DriverHomePage> {
       }
     });
 
-    final result = await ApiService.getMyVehicles();
+    // 同時獲取車輛資訊和進行中行程
+    final vehicleResult = await ApiService.getMyVehicles();
+    final activeTripResult = await ApiService.getDriverActiveTrip();
 
     if (!mounted) return;
 
-    if (result['success'] == true && result['data'] is List) {
-      final vehicles = (result['data'] as List)
+    // 處理進行中行程
+    if (activeTripResult['success'] == true && activeTripResult['data'] != null) {
+      setState(() {
+        _activeTrip = activeTripResult['data'] as Map<String, dynamic>?;
+      });
+    } else {
+      setState(() {
+        _activeTrip = null;
+      });
+    }
+
+    if (vehicleResult['success'] == true && vehicleResult['data'] is List) {
+      final vehicles = (vehicleResult['data'] as List)
           .whereType<Map<String, dynamic>>()
           .toList(growable: false);
       vehicles.sort((a, b) => (a['vehicle_id'] ?? '').compareTo(b['vehicle_id'] ?? ''));
 
-      double total = 0;
+      // 計算總收益（micro SUI → SUI）
+      double totalMicroIota = 0;
       for (final vehicle in vehicles) {
-        final value = vehicle['total_earnings_micro_iota'];
+        final value = vehicle['total_earnings_micro_sui'];
         if (value is num) {
-          total += value.toDouble();
+          totalMicroIota += value.toDouble();
         } else if (value is String) {
-          total += double.tryParse(value) ?? 0;
+          totalMicroIota += double.tryParse(value) ?? 0;
         }
       }
 
       setState(() {
         _vehicles = vehicles;
-        _totalEarnings = total / 1000000; // micro IOTA -> IOTA
+        // 正確換算：micro SUI -> SUI (1 SUI = 1,000,000 micro SUI)
+        _totalEarnings = totalMicroIota / 1000000;
         _statusMessage = '已更新 ${vehicles.length} 輛車輛狀態';
       });
 
@@ -92,7 +145,7 @@ class _DriverHomePageState extends State<DriverHomePage> {
     } else {
       setState(() {
         _vehicles = [];
-        _statusMessage = result['error']?.toString() ?? '取得車輛資料失敗';
+        _statusMessage = vehicleResult['error']?.toString() ?? '取得車輛資料失敗';
       });
     }
 
@@ -136,6 +189,25 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
   void _openAvailableTrips() {
     Navigator.pushNamed(context, '/available_trips', arguments: {'session': _session});
+  }
+
+  void _openActiveTrip() {
+    if (_activeTrip == null) return;
+
+    final tripId = _activeTrip!['trip_id'] as int;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TripInProgressPage(
+          session: _session,
+          tripId: tripId,
+        ),
+      ),
+    ).then((_) {
+      // 返回後重新檢查是否還有進行中行程
+      _refreshData();
+    });
   }
 
   @override
@@ -232,6 +304,60 @@ class _DriverHomePageState extends State<DriverHomePage> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 繼續進行中行程按鈕（如果有）
+          if (_activeTrip != null) ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.blue, width: 2),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.drive_eta, color: Colors.blue, size: 20),
+                      SizedBox(width: 8),
+                      Text(
+                        '您有進行中的行程',
+                        style: TextStyle(
+                          color: Colors.blue,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _openActiveTrip,
+                      icon: const Icon(Icons.navigation, size: 24),
+                      label: Text(
+                        '繼續行程 #${_activeTrip!['trip_id']}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
           // 查看可接單行程按鈕
           SizedBox(
             width: double.infinity,

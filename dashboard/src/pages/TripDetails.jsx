@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
 import { tripAPI } from '../services/api';
-import { MapPin, Search, Filter, User, Car, Calendar, DollarSign, AlertCircle, Eye, X, Clock, Navigation } from 'lucide-react';
+import { MapPin, Search, Filter, User, Car, Calendar, DollarSign, AlertCircle, Eye, X, Clock, Navigation, Download } from 'lucide-react';
+import geocodingService from '../services/geocoding';
+import DualCurrencyDisplay from '../components/DualCurrencyDisplay';
 
 const TripDetails = () => {
   const [trips, setTrips] = useState([]);
@@ -12,6 +14,7 @@ const TripDetails = () => {
   const [searchValue, setSearchValue] = useState('');
   const [selectedTrip, setSelectedTrip] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [addresses, setAddresses] = useState({});
 
   useEffect(() => {
     fetchAllTrips();
@@ -72,6 +75,20 @@ const TripDetails = () => {
   const handleViewTrip = async (trip) => {
     setSelectedTrip(trip);
     setModalOpen(true);
+
+    // 預先加載地址（如果還沒加載）
+    const pickupKey = `${trip.pickup_lat},${trip.pickup_lng}`;
+    const dropoffKey = `${trip.dropoff_lat},${trip.dropoff_lng}`;
+
+    if (trip.pickup_lat && trip.pickup_lng && !addresses[pickupKey]) {
+      const pickupAddr = await geocodingService.getAddress(trip.pickup_lat, trip.pickup_lng);
+      setAddresses(prev => ({ ...prev, [pickupKey]: pickupAddr }));
+    }
+
+    if (trip.dropoff_lat && trip.dropoff_lng && !addresses[dropoffKey]) {
+      const dropoffAddr = await geocodingService.getAddress(trip.dropoff_lat, trip.dropoff_lng);
+      setAddresses(prev => ({ ...prev, [dropoffKey]: dropoffAddr }));
+    }
   };
 
   const getStatusBadge = (status) => {
@@ -97,6 +114,28 @@ const TripDetails = () => {
     };
     const paymentInfo = paymentMap[status] || { label: status || '未知', class: 'badge-secondary' };
     return <span className={`badge ${paymentInfo.class}`}>{paymentInfo.label}</span>;
+  };
+
+  const getDisplayAddress = (lat, lng, fallbackAddress) => {
+    if (!lat || !lng) return fallbackAddress || '未知地址';
+
+    const key = `${lat},${lng}`;
+    if (addresses[key]) {
+      return addresses[key];
+    }
+
+    // 如果有數據庫中的地址，優先使用
+    if (fallbackAddress) {
+      return fallbackAddress;
+    }
+
+    // 顯示載入中或座標
+    return `📍 ${lat}, ${lng}`;
+  };
+
+  const handleExportCache = () => {
+    geocodingService.exportCacheAsJSON();
+    alert('地址緩存已匯出為 geo_cache.json');
   };
 
   const getStatusCounts = () => {
@@ -174,19 +213,46 @@ const TripDetails = () => {
           color: 'white',
           boxShadow: '0 10px 40px rgba(30, 64, 175, 0.3)'
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <div style={{
-              padding: '12px',
-              background: 'rgba(255, 255, 255, 0.2)',
-              borderRadius: '16px',
-              backdropFilter: 'blur(10px)'
-            }}>
-              <MapPin size={36} />
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <div style={{
+                padding: '12px',
+                background: 'rgba(255, 255, 255, 0.2)',
+                borderRadius: '16px',
+                backdropFilter: 'blur(10px)'
+              }}>
+                <MapPin size={36} />
+              </div>
+              <div>
+                <h1 style={{ fontSize: '2.5rem', fontWeight: '900', marginBottom: '0.25rem' }}>行程詳細</h1>
+                <p style={{ fontSize: '1.125rem', opacity: 0.95 }}>查看和管理所有行程資訊</p>
+              </div>
             </div>
-            <div>
-              <h1 style={{ fontSize: '2.5rem', fontWeight: '900', marginBottom: '0.25rem' }}>行程詳細</h1>
-              <p style={{ fontSize: '1.125rem', opacity: 0.95 }}>查看和管理所有行程資訊</p>
-            </div>
+            <button
+              onClick={handleExportCache}
+              className="btn"
+              style={{
+                background: 'rgba(255, 255, 255, 0.2)',
+                backdropFilter: 'blur(10px)',
+                border: '2px solid rgba(255, 255, 255, 0.3)',
+                color: 'white',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '0.75rem 1.5rem',
+                fontSize: '0.9375rem',
+                fontWeight: '700'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.3)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)';
+              }}
+            >
+              <Download size={20} />
+              匯出地址緩存
+            </button>
           </div>
         </div>
 
@@ -412,11 +478,13 @@ const TripDetails = () => {
                       {trip.distance_km ? `${Number(trip.distance_km).toFixed(2)} km` : '-'}
                     </td>
                     <td style={{ fontWeight: '700', color: '#0f172a' }}>
-                      {trip.total_amount != null
-                        ? `${Number(trip.total_amount).toFixed(2)} SUI`
-                        : trip.fare != null
-                        ? `${Number(trip.fare).toFixed(2)} SUI`
-                        : '-'}
+                      {trip.total_amount != null ? (
+                        <DualCurrencyDisplay suiAmount={Number(trip.total_amount)} />
+                      ) : trip.fare != null ? (
+                        <DualCurrencyDisplay suiAmount={Number(trip.fare)} />
+                      ) : (
+                        '-'
+                      )}
                     </td>
                     <td>{getPaymentStatusBadge(trip.payment_status)}</td>
                     <td>{getStatusBadge(trip.status)}</td>
@@ -559,7 +627,7 @@ const TripDetails = () => {
                       <span style={{ fontSize: '1rem', fontWeight: '800', color: '#0c4a6e' }}>起點位置</span>
                     </div>
                     <p style={{ fontSize: '0.875rem', fontWeight: '600', color: '#0c4a6e' }}>
-                      {selectedTrip.pickup_address || `緯度: ${selectedTrip.pickup_lat}, 經度: ${selectedTrip.pickup_lng}`}
+                      {getDisplayAddress(selectedTrip.pickup_lat, selectedTrip.pickup_lng, selectedTrip.pickup_address)}
                     </p>
                   </div>
                   <button
@@ -590,7 +658,7 @@ const TripDetails = () => {
                         <span style={{ fontSize: '1rem', fontWeight: '800', color: '#0c4a6e' }}>終點位置</span>
                       </div>
                       <p style={{ fontSize: '0.875rem', fontWeight: '600', color: '#0c4a6e' }}>
-                        {selectedTrip.dropoff_address || `緯度: ${selectedTrip.dropoff_lat}, 經度: ${selectedTrip.dropoff_lng}`}
+                        {getDisplayAddress(selectedTrip.dropoff_lat, selectedTrip.dropoff_lng, selectedTrip.dropoff_address)}
                       </p>
                     </div>
                     <button
@@ -629,7 +697,7 @@ const TripDetails = () => {
                   <span style={{ fontSize: '0.875rem', fontWeight: '700', color: '#64748b' }}>距離</span>
                 </div>
                 <p style={{ fontSize: '1.5rem', fontWeight: '900', color: '#0f172a' }}>
-                  {selectedTrip.distance_km ? `${selectedTrip.distance_km} km` : '未知'}
+                  {selectedTrip.distance_km ? `${Number(selectedTrip.distance_km).toFixed(2)} km` : '未知'}
                 </p>
               </div>
 
@@ -639,11 +707,13 @@ const TripDetails = () => {
                   <span style={{ fontSize: '0.875rem', fontWeight: '700', color: '#64748b' }}>費用</span>
                 </div>
                 <p style={{ fontSize: '1.5rem', fontWeight: '900', color: '#0f172a' }}>
-                  {selectedTrip.total_amount != null
-                    ? `${Number(selectedTrip.total_amount).toFixed(2)} SUI`
-                    : selectedTrip.fare != null
-                    ? `${Number(selectedTrip.fare).toFixed(2)} SUI`
-                    : '未知'}
+                  {selectedTrip.total_amount != null ? (
+                    <DualCurrencyDisplay suiAmount={Number(selectedTrip.total_amount)} />
+                  ) : selectedTrip.fare != null ? (
+                    <DualCurrencyDisplay suiAmount={Number(selectedTrip.fare)} />
+                  ) : (
+                    '未知'
+                  )}
                 </p>
               </div>
 

@@ -1,0 +1,135 @@
+/* dashboard/src/components/PageTransition.css */
+
+.page-transition {
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* Fade In Animation */
+.page-transition.fadeIn {
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Fade Out Animation */
+.page-transition.fadeOut {
+  animation: fadeOut 0.3s ease-in-out;
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+}
+
+/* Loading State */
+.page-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background-color: #f7fafc;
+}
+
+.loading-spinner {
+  text-align: center;
+}
+
+.spinner-icon {
+  width: 48px;
+  height: 48px;
+  color: #4299e1;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 16px;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-spinner p {
+  font-size: 16px;
+  color: #718096;
+  font-weight: 500;
+}
+
+/* Skeleton Loading (for lists/cards) */
+.skeleton {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: loading 1.5s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+@keyframes loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton-text {
+  height: 16px;
+  margin-bottom: 8px;
+}
+
+.skeleton-title {
+  height: 24px;
+  width: 60%;
+  margin-bottom: 12px;
+}
+
+.skeleton-card {
+  height: 120px;
+  margin-bottom: 16px;
+}
+
+/* Responsive Design */
+@media (max-width: 640px) {
+  .page-transition.fadeIn {
+    animation-duration: 0.2s;
+  }
+
+  .page-transition.fadeOut {
+    animation-duration: 0.2s;
+  }
+
+  .spinner-icon {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+/* Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+  .page-transition.fadeIn,
+  .page-transition.fadeOut {
+    animation: none;
+  }
+
+  .spinner-icon {
+    animation: none;
+  }
+}

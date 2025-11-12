@@ -1,0 +1,321 @@
+{
+  "test_scenarios": [
+    {
+      "scenario_name": "創建退款請求 - 成功",
+      "description": "乘客為已完成的行程創建退款請求",
+      "request": {
+        "method": "POST",
+        "endpoint": "/api/v1/refunds/create",
+        "headers": {
+          "Authorization": "Bearer <USER_ACCESS_TOKEN>",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "trip_id": 1,
+          "reason": "司機繞路導致費用過高，請求部分退款",
+          "refund_amount_sui": 0.5
+        }
+      },
+      "expected_response": {
+        "success": true,
+        "data": {
+          "refund_request_id": 1,
+          "trip_id": 1,
+          "refund_amount_sui": 0.5,
+          "refund_amount_mist": 500000000,
+          "status": "pending",
+          "transaction_data": {
+            "package_id": "0x...",
+            "module": "refund_module",
+            "function": "create_refund_request",
+            "arguments": {
+              "trip_id": "1",
+              "escrow_object_id": "0x...",
+              "original_amount": "1000000000",
+              "refund_amount": "500000000",
+              "reason": "..."
+            }
+          },
+          "instructions": [
+            "退款請求已創建",
+            "需要平台審核後執行鏈上退款",
+            "退款金額: 0.5 SUI",
+            "退款將從平台退款池轉帳至您的錢包"
+          ]
+        }
+      },
+      "blockchain_transaction": {
+        "description": "調用 Move 合約創建退款請求",
+        "contract": "autodrive::refund_module",
+        "function": "create_refund_request",
+        "signer": "0xPASSENGER_WALLET_ADDRESS",
+        "gas_budget": "10000000",
+        "expected_events": [
+          {
+            "type": "RefundEvent",
+            "fields": {
+              "refund_id": "0x...",
+              "trip_id": 1,
+              "requester": "0xPASSENGER_WALLET_ADDRESS",
+              "amount": 500000000,
+              "status": 1
+            }
+          }
+        ],
+        "expected_objects_created": [
+          {
+            "type": "RefundRequest",
+            "owner": "Shared",
+            "fields": {
+              "trip_id": 1,
+              "requester": "0xPASSENGER_WALLET_ADDRESS",
+              "escrow_object_id": "0x...",
+              "original_amount": 1000000000,
+              "refund_amount": 500000000,
+              "status": 1,
+              "created_at": "<timestamp>"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "scenario_name": "批准並執行退款 - 成功",
+      "description": "管理員批准退款請求並執行鏈上轉帳",
+      "request": {
+        "method": "POST",
+        "endpoint": "/api/v1/refunds/1/approve",
+        "headers": {
+          "Authorization": "Bearer <ADMIN_ACCESS_TOKEN>",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "admin_note": "審核通過，司機確實繞路"
+        }
+      },
+      "expected_response": {
+        "success": true,
+        "data": {
+          "refund_request_id": 1,
+          "transaction_hash": "0xREFUND_TX_HASH",
+          "transaction_data": {
+            "package_id": "0x...",
+            "module": "refund_module",
+            "function": "approve_and_execute_refund",
+            "arguments": {
+              "request": "REFUND_REQUEST_OBJECT_1",
+              "pool": "REFUND_POOL_OBJECT"
+            },
+            "signer": "0xPLATFORM_WALLET_ADDRESS"
+          },
+          "refund_amount_sui": 0.5,
+          "refund_amount_mist": 500000000,
+          "recipient": "0xPASSENGER_WALLET_ADDRESS",
+          "status": "approved",
+          "message": "退款已批准並執行鏈上轉帳"
+        }
+      },
+      "blockchain_transaction": {
+        "description": "調用 Move 合約執行退款",
+        "contract": "autodrive::refund_module",
+        "function": "approve_and_execute_refund",
+        "signer": "0xPLATFORM_WALLET_ADDRESS",
+        "gas_budget": "10000000",
+        "expected_events": [
+          {
+            "type": "RefundEvent",
+            "fields": {
+              "refund_id": "0x...",
+              "trip_id": 1,
+              "requester": "0xPASSENGER_WALLET_ADDRESS",
+              "amount": 500000000,
+              "status": 4
+            }
+          }
+        ],
+        "expected_balance_changes": [
+          {
+            "address": "0xREFUND_POOL_ADDRESS",
+            "amount": -500000000,
+            "description": "退款池餘額減少"
+          },
+          {
+            "address": "0xPASSENGER_WALLET_ADDRESS",
+            "amount": 500000000,
+            "description": "乘客收到退款"
+          }
+        ]
+      }
+    },
+    {
+      "scenario_name": "拒絕退款請求 - 成功",
+      "description": "管理員拒絕退款請求",
+      "request": {
+        "method": "POST",
+        "endpoint": "/api/v1/refunds/2/reject",
+        "headers": {
+          "Authorization": "Bearer <ADMIN_ACCESS_TOKEN>",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "admin_note": "經查證，司機並無繞路行為，費用合理"
+        }
+      },
+      "expected_response": {
+        "success": true,
+        "data": {
+          "refund_request_id": 2,
+          "status": "rejected",
+          "message": "退款請求已拒絕"
+        }
+      },
+      "blockchain_transaction": {
+        "description": "調用 Move 合約標記退款為拒絕",
+        "contract": "autodrive::refund_module",
+        "function": "reject_refund",
+        "signer": "0xPLATFORM_WALLET_ADDRESS",
+        "gas_budget": "10000000",
+        "expected_events": [
+          {
+            "type": "RefundEvent",
+            "fields": {
+              "refund_id": "0x...",
+              "trip_id": 2,
+              "requester": "0xPASSENGER_WALLET_ADDRESS",
+              "amount": 300000000,
+              "status": 3
+            }
+          }
+        ]
+      }
+    },
+    {
+      "scenario_name": "創建退款請求 - 行程未完成",
+      "description": "行程狀態不是 completed，無法退款",
+      "request": {
+        "method": "POST",
+        "endpoint": "/api/v1/refunds/create",
+        "headers": {
+          "Authorization": "Bearer <USER_ACCESS_TOKEN>",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "trip_id": 5,
+          "reason": "行程還在進行中，想取消",
+          "refund_amount_sui": 1.0
+        }
+      },
+      "expected_response": {
+        "success": false,
+        "error": "行程狀態必須為 completed，當前狀態: in_progress"
+      },
+      "status_code": 400
+    },
+    {
+      "scenario_name": "創建退款請求 - 金額超過原始支付",
+      "description": "退款金額超過原始支付金額",
+      "request": {
+        "method": "POST",
+        "endpoint": "/api/v1/refunds/create",
+        "headers": {
+          "Authorization": "Bearer <USER_ACCESS_TOKEN>",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "trip_id": 1,
+          "reason": "要求全額加倍退款",
+          "refund_amount_sui": 5.0
+        }
+      },
+      "expected_response": {
+        "success": false,
+        "error": "退款金額 5.0 SUI 超過原始支付金額 ..."
+      },
+      "status_code": 400
+    },
+    {
+      "scenario_name": "批准退款 - 非管理員",
+      "description": "普通用戶嘗試批准退款",
+      "request": {
+        "method": "POST",
+        "endpoint": "/api/v1/refunds/1/approve",
+        "headers": {
+          "Authorization": "Bearer <USER_ACCESS_TOKEN>",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "admin_note": "自己批准自己的退款"
+        }
+      },
+      "expected_response": {
+        "success": false,
+        "error": "需要管理員權限"
+      },
+      "status_code": 403
+    }
+  ],
+  "database_schema": {
+    "table": "refund_requests",
+    "fields": {
+      "id": "INT PRIMARY KEY",
+      "trip_id": "INT FOREIGN KEY (trips.trip_id)",
+      "user_id": "INT FOREIGN KEY (users.id)",
+      "payment_transaction_id": "VARCHAR(66) FOREIGN KEY (payment_transactions.transaction_id)",
+      "reason": "TEXT",
+      "requested_refund_twd": "FLOAT (實際為 SUI 金額)",
+      "approved_refund_twd": "FLOAT",
+      "status": "VARCHAR(20) DEFAULT 'refunded'",
+      "decision_note": "TEXT",
+      "liability": "VARCHAR(20)",
+      "liability_note": "TEXT",
+      "recovery_status": "VARCHAR(20) DEFAULT 'pending'",
+      "created_at": "TIMESTAMP DEFAULT NOW()",
+      "decided_at": "TIMESTAMP",
+      "refunded_at": "TIMESTAMP DEFAULT NOW()"
+    }
+  },
+  "move_contract_verification": {
+    "contract_address": "待部署後填入",
+    "package_id": "待部署後填入",
+    "modules": [
+      {
+        "name": "refund_module",
+        "functions": [
+          "init_refund_pool",
+          "fund_refund_pool",
+          "create_refund_request",
+          "approve_and_execute_refund",
+          "reject_refund",
+          "get_refund_status",
+          "get_refund_amount",
+          "get_pool_balance"
+        ],
+        "structs": [
+          "RefundRequest",
+          "RefundPool",
+          "RefundEvent"
+        ]
+      }
+    ],
+    "deployment_steps": [
+      "1. 編譯合約: sui move build",
+      "2. 部署到 testnet: sui client publish --gas-budget 100000000",
+      "3. 初始化退款池: sui client call --package <PACKAGE_ID> --module refund_module --function init_refund_pool",
+      "4. 為退款池注資: sui client call --package <PACKAGE_ID> --module refund_module --function fund_refund_pool --args <POOL_ID> <COIN_OBJECT>",
+      "5. 記錄 PACKAGE_ID 到 .env: CONTRACT_PACKAGE_ID=0x..."
+    ]
+  },
+  "test_wallet_addresses": {
+    "platform_wallet": "0xPLATFORM_WALLET_ADDRESS",
+    "passenger_wallet": "0xPASSENGER_WALLET_ADDRESS",
+    "driver_wallet": "0xDRIVER_WALLET_ADDRESS",
+    "refund_pool": "0xREFUND_POOL_OBJECT_ID"
+  },
+  "notes": [
+    "退款功能需要平台預先在退款池中注資",
+    "退款金額從退款池轉出，不影響司機已收到的款項",
+    "所有退款交易都會記錄在區塊鏈上，可追溯",
+    "退款請求必須經過管理員審核",
+    "行程必須已完成才能申請退款"
+  ]
+}

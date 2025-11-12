@@ -19,10 +19,15 @@ logger = logging.getLogger(__name__)
 from app.core.database import get_async_session
 from app.models.vehicle import Vehicle
 from app.models.user import User
-from app.schemas.vehicle import VehicleResponse, VehicleCreate, VehicleUpdate, VehicleLocationUpdate
+from app.schemas.vehicle import (
+    VehicleResponse, VehicleCreate, VehicleUpdate, VehicleLocationUpdate,
+    VehicleRecallStart, VehicleRecallCancel, VehicleRecallComplete, VehicleRecallStatus
+)
 from app.api.deps import get_current_user
 from app.services.location_service import LocationService
 from app.services.contract_service import contract_service
+from app.services.vehicle_recall_service import VehicleRecallService
+from app.services.recall_simulator import recall_simulator
 
 router = APIRouter(prefix="/vehicles", tags=["vehicles"])
 
@@ -80,7 +85,7 @@ async def get_available_vehicles(
             hourly_rate=vehicle.hourly_rate,
             total_trips=vehicle.total_trips,
             total_distance_km=vehicle.total_distance_km,
-            total_earnings_micro_iota=vehicle.total_earnings_micro_iota,
+            total_earnings_micro_sui=vehicle.total_earnings_micro_sui,
             created_at=vehicle.created_at,
             updated_at=vehicle.updated_at,
             last_active_at=vehicle.last_active_at,
@@ -264,7 +269,7 @@ async def update_vehicle_status_by_query(
     current_user: User = Depends(get_current_user)
 ):
     """通過查詢參數更新車輛狀態"""
-    
+
     result = await session.execute(
         select(Vehicle).where(
             and_(
@@ -276,11 +281,107 @@ async def update_vehicle_status_by_query(
     vehicle = result.scalar_one_or_none()
     if not vehicle:
         raise HTTPException(status_code=404, detail="車輛不存在或無權限")
-    
+
     if status not in ["available", "on_trip", "offline", "maintenance"]:
         raise HTTPException(status_code=400, detail="無效的車輛狀態")
-    
+
     vehicle.status = status
     await session.commit()
-    
+
     return {"success": True, "status": status}
+
+# ========== 車輛召回相關 API ==========
+
+@router.get("/recall/available")
+async def get_recallable_vehicles(
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
+):
+    """取得可召回的車輛列表"""
+    recall_service = VehicleRecallService(session)
+    vehicles = await recall_service.get_driver_vehicles_for_recall(current_user.id)
+    return {"success": True, "vehicles": vehicles}
+
+@router.post("/recall/start")
+async def start_vehicle_recall(
+    request: VehicleRecallStart,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
+):
+    """開始召回車輛"""
+    recall_service = VehicleRecallService(session)
+
+    try:
+        result = await recall_service.start_recall(
+            driver_id=current_user.id,
+            vehicle_id=request.vehicle_id,
+            target_lat=request.target_lat,
+            target_lng=request.target_lng
+        )
+
+        # 啟動召回模擬（使用 Google Maps 路線）
+        await recall_simulator.start_simulation(
+            vehicle_id=request.vehicle_id,
+            session=session,
+            origin_lat=result['current_lat'],
+            origin_lng=result['current_lng'],
+            dest_lat=request.target_lat,
+            dest_lng=request.target_lng
+        )
+
+        return {"success": True, "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/recall/complete")
+async def complete_vehicle_recall(
+    request: VehicleRecallComplete,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
+):
+    """完成車輛召回"""
+    recall_service = VehicleRecallService(session)
+
+    try:
+        result = await recall_service.complete_recall(
+            vehicle_id=request.vehicle_id,
+            final_lat=request.final_lat,
+            final_lng=request.final_lng
+        )
+        return {"success": True, "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/recall/cancel")
+async def cancel_vehicle_recall(
+    request: VehicleRecallCancel,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
+):
+    """取消車輛召回"""
+    recall_service = VehicleRecallService(session)
+
+    try:
+        result = await recall_service.cancel_recall(request.vehicle_id)
+
+        # 停止召回模擬
+        recall_simulator.stop_simulation(request.vehicle_id)
+
+        return {"success": True, "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/recall/status/{vehicle_id}")
+async def get_recall_status(
+    vehicle_id: str,
+    session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user)
+):
+    """查詢車輛召回狀態"""
+    recall_service = VehicleRecallService(session)
+
+    try:
+        status = await recall_service.get_recall_status(vehicle_id)
+        return {"success": True, "data": status}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

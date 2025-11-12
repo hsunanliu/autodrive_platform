@@ -25,6 +25,7 @@ services:
     depends_on:
       - db
       - redis
+      - ipfs
 
   # 2. PostgreSQL 資料庫服務
   db:
@@ -51,7 +52,21 @@ services:
     ports:
       - "6379:6379"  # 將 Redis 的 6379 port 映射到本機
 
-  # 4. Dashboard 前端服務
+  # 4. IPFS 分散式文件存儲服務
+  ipfs:
+    # 使用官方的 IPFS Kubo 映像檔
+    image: ipfs/kubo:latest
+    platform: linux/amd64
+    ports:
+      - "4001:4001"  # P2P 通訊端口
+      - "5001:5001"  # API 端口
+      - "8081:8080"  # Gateway 端口 (本機 8081 映射到容器 8080)
+    volumes:
+      - ipfs_data:/data/ipfs
+    environment:
+      - IPFS_PROFILE=server
+
+  # 5. Dashboard 前端服務
   dashboard:
     image: node:20-alpine
     platform: linux/amd64
@@ -63,10 +78,11 @@ services:
       - /app/node_modules
     command: sh -c "npm install && npm run dev -- --host"
     environment:
-      - VITE_API_BASE_URL=http://10.232.201.156:8000/api/v1/admin
+      - VITE_API_BASE_URL=http://localhost:8000/api/v1/admin
     depends_on:
       - backend
 
 # 定義 Docker 的具名磁碟區 (Named Volumes)
 volumes:
   postgres_data:
+  ipfs_data:

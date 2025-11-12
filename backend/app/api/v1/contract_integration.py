@@ -202,7 +202,7 @@ async def create_ride_request_on_contract(
         dropoff_lat=ride_data.dest_lat,
         dropoff_lng=ride_data.dest_lng,
         passenger_count=ride_data.passenger_count,
-        payment_amount_micro_iota=str(ride_data.max_price),
+        payment_amount_micro_sui=str(ride_data.max_price),
         status="blockchain_pending"
     )
     

@@ -25,7 +25,11 @@ async def get_totals(
     ).scalar() or 0
     total_vehicles = (await session.execute(select(func.count(Vehicle.vehicle_id)))).scalar() or 0
     total_trips = (await session.execute(select(func.count(Trip.trip_id)))).scalar() or 0
-    total_revenue = (await session.execute(select(func.sum(Trip.fare)).where(Trip.status == "completed"))).scalar() or 0
+    total_revenue = (await session.execute(select(func.sum(Trip.total_amount)).where(Trip.status == "completed"))).scalar() or 0
+
+    print(f"📊 Dashboard API - Total Revenue: {total_revenue} SUI")
+    print(f"📊 Dashboard API - Total Trips: {total_trips}")
+    print(f"📊 Dashboard API - Completed Trips Revenue Calculation: SUM(total_amount) WHERE status='completed'")
 
     return {
         "totalUsers": total_users,

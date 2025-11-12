@@ -10,6 +10,7 @@ import {
   Menu,
   X,
   Shield,
+  ShoppingCart,
 } from 'lucide-react';
 
 const Header = () => {
@@ -26,6 +27,7 @@ const Header = () => {
 
   const menuItems = [
     { path: '/dashboard', icon: LayoutDashboard, label: '儀表板' },
+    { path: '/orders', icon: ShoppingCart, label: '訂單中心' },
     { path: '/refunds', icon: RefreshCcw, label: '退款管理' },
     { path: '/vehicles', icon: Car, label: '車輛管理' },
     { path: '/users', icon: Users, label: '使用者管理' },

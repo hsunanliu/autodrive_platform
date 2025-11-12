@@ -73,7 +73,7 @@ class _VehicleLocationEditPageState extends State<VehicleLocationEditPage> {
               children: [
                 TileLayer(
                   urlTemplate:
-                      'https://api.mapbox.com/styles/v1/mapbox/light-v11/tiles/{z}/{x}/{y}?access_token=$mapboxAccessToken',
+                      osmTileUrl,
                   userAgentPackageName: 'com.autodrive.driver',
                 ),
                 MarkerLayer(

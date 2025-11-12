@@ -39,10 +39,13 @@ class _AuthPageState extends State<AuthPage> {
         final userData = result['data']['user'];
         final userType = userData['user_type'] ?? 'passenger';
 
+        // 'both' 類型用戶預設使用 passenger，driver/passenger 用戶使用對應身份
+        final finalRole = userType == 'both' ? 'passenger' : userType;
+
         final session = UserSession(
           userId: userData['id'],
           username: userData['username'],
-          role: userType,
+          role: finalRole,
           accessToken: result['data']['access_token'],
           walletAddress: userData['wallet_address'],
           phoneNumber: userData['phone_number'],
@@ -51,8 +54,10 @@ class _AuthPageState extends State<AuthPage> {
 
         await SessionManager.saveSession(session);
 
-        // 根據用戶類型跳轉
-        if (userType == 'driver') {
+        if (!mounted) return;
+
+        // 根據最終角色跳轉
+        if (finalRole == 'driver') {
           Navigator.pushReplacementNamed(
             context,
             '/driver',

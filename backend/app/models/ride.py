@@ -143,7 +143,47 @@ class Trip(Base):
         nullable=True,
         comment="總金額"
     )
-    
+
+    # === 動態定價相關 ===
+    surge_multiplier = Column(
+        Float,
+        default=1.0,
+        nullable=False,
+        comment="動態加價係數（1.0 = 無加價）"
+    )
+
+    surge_reason = Column(
+        String(200),
+        nullable=True,
+        comment="加價原因說明"
+    )
+
+    price_type = Column(
+        String(20),
+        default="standard",
+        nullable=False,
+        comment="定價類型：dynamic（動態）或 standard（標準）"
+    )
+
+    priority = Column(
+        Integer,
+        default=2,
+        nullable=False,
+        comment="優先級：1=快速叫車（動態定價），2=標準叫車（固定價格）"
+    )
+
+    estimated_wait_minutes = Column(
+        Integer,
+        nullable=True,
+        comment="預估等待時間（分鐘）"
+    )
+
+    actual_wait_minutes = Column(
+        Integer,
+        nullable=True,
+        comment="實際等待時間（分鐘），從創建到接單"
+    )
+
     # === 區塊鏈支付 ===
     payment_status = Column(
         String(20),
@@ -158,10 +198,10 @@ class Trip(Base):
         comment="支付交易 Hash"
     )
     
-    payment_amount_micro_iota = Column(
+    payment_amount_micro_sui = Column(
         String(50),
         nullable=True,
-        comment="IOTA支付金額（micro IOTA）"
+        comment="SUI支付金額（micro SUI）"
     )
     
     blockchain_tx_id = Column(
@@ -232,6 +272,12 @@ class Trip(Base):
     driver = relationship("User", foreign_keys=[driver_id])
     vehicle = relationship("Vehicle")
     reviews = relationship("Review")
+    waypoints = relationship(
+        "TripWaypoint",
+        back_populates="trip",
+        cascade="all, delete-orphan",
+        order_by="TripWaypoint.sequence"
+    )
     
     # === 約束條件 ===
     __table_args__ = (

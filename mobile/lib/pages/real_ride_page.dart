@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../services/api_service.dart';
+import '../services/websocket_service.dart';
 import 'dart:async';
 
 class RealRidePage extends StatefulWidget {
@@ -14,17 +15,131 @@ class RealRidePage extends StatefulWidget {
 
 class _RealRidePageState extends State<RealRidePage> {
   final TextEditingController _controller = TextEditingController();
+  final TextEditingController _waypointController = TextEditingController(); // 新增：停靠點輸入
   final MapController _mapController = MapController();
-  
+  final WebSocketService _ws = WebSocketService();
+
   LatLng? _destination;
   LatLng _userLocation = const LatLng(25.0340, 121.5645); // 台北預設位置
-  
+  List<Map<String, dynamic>> _waypoints = []; // 新增：停靠點列表
+
   bool _confirmed = false;
   String _status = '';
   List<dynamic> _vehicles = [];
   Map<String, dynamic>? _selectedVehicle;
   Map<String, dynamic>? _currentTrip;
   Map<String, dynamic>? _tripEstimate;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupWebSocket();
+  }
+
+  @override
+  void dispose() {
+    _ws.off('trip_accepted');
+    _ws.off('trip_started');
+    _controller.dispose();
+    _waypointController.dispose();
+    _mapController.dispose();
+    super.dispose();
+  }
+
+  // 新增：添加停靠點
+  void _addWaypoint(String address) async {
+    if (address.isEmpty) return;
+    if (_waypoints.length >= 5) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('最多只能添加 5 個停靠點')),
+      );
+      return;
+    }
+
+    setState(() => _status = '搜尋停靠點...');
+
+    // 簡單的地址映射 (實際應用中應該使用真實的 geocoding API)
+    final addressMap = {
+      '台北車站': const LatLng(25.0478, 121.5173),
+      '西門町': const LatLng(25.0420, 121.5071),
+      '信義區': const LatLng(25.0330, 121.5654),
+      '松山區': const LatLng(25.0500, 121.5800),
+      '大安區': const LatLng(25.0267, 121.5436),
+    };
+
+    LatLng? coords;
+    for (final entry in addressMap.entries) {
+      if (address.contains(entry.key)) {
+        coords = entry.value;
+        break;
+      }
+    }
+
+    if (coords != null) {
+      setState(() {
+        _waypoints.add({
+          'lat': coords!.latitude,
+          'lng': coords.longitude,
+          'address': address,
+        });
+        _status = '✅ 已添加停靠點: $address';
+        _waypointController.clear();
+      });
+
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) setState(() => _status = '');
+      });
+    } else {
+      setState(() => _status = '❌ 找不到該地址');
+    }
+  }
+
+  // 新增：移除停靠點
+  void _removeWaypoint(int index) {
+    setState(() {
+      final removed = _waypoints.removeAt(index);
+      _status = '已移除停靠點: ${removed['address']}';
+    });
+
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _status = '');
+    });
+  }
+
+  void _setupWebSocket() {
+    // 監聽司機接單事件
+    _ws.on('trip_accepted', (data) {
+      print('📨 收到司機接單通知: $data');
+      if (mounted && _currentTrip != null) {
+        setState(() {
+          _status = '✅ 司機已接單！正在前往接您...';
+          if (_currentTrip != null) {
+            _currentTrip!['status'] = 'accepted';
+          }
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ 司機已接單！正在前往接您'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    });
+
+    // 監聽行程開始事件
+    _ws.on('trip_started', (data) {
+      print('📨 收到行程開始通知: $data');
+      if (mounted && _currentTrip != null) {
+        setState(() {
+          _status = '🚗 行程已開始';
+          if (_currentTrip != null) {
+            _currentTrip!['status'] = 'picked_up';
+          }
+        });
+      }
+    });
+  }
 
   // 簡單的地址轉座標 (可以替換為真實的 geocoding 服務)
   Future<void> _geocodeAddress(String address) async {
@@ -166,6 +281,7 @@ class _RealRidePageState extends State<RealRidePage> {
       passengerCount: 1,
       preferredVehicleType: _selectedVehicle!['vehicle_type'],
       notes: '透過 AutoDrive 叫車',
+      waypoints: _waypoints.isNotEmpty ? _waypoints : null, // 新增：傳遞停靠點
     );
 
     if (result['success']) {
@@ -173,7 +289,12 @@ class _RealRidePageState extends State<RealRidePage> {
         _currentTrip = result['data'];
         _status = '✅ 叫車成功！行程 ID: ${_currentTrip!['trip_id']}';
       });
-      
+
+      // 加入 WebSocket 房間以接收即時更新
+      final tripId = _currentTrip!['trip_id'];
+      _ws.joinTrip(tripId);
+      print('📡 已加入行程 $tripId 的 WebSocket 房間');
+
       _showTripDetails();
     } else {
       setState(() => _status = '❌ 叫車失敗');
@@ -218,9 +339,9 @@ class _RealRidePageState extends State<RealRidePage> {
                 ),
               ),
               const SizedBox(height: 8),
-              _buildDetailRow('基本費用', '${_currentTrip!['fare_breakdown']['base_fare']} micro IOTA'),
-              _buildDetailRow('距離費用', '${_currentTrip!['fare_breakdown']['distance_fare']} micro IOTA'),
-              _buildDetailRow('總金額', '${_currentTrip!['fare_breakdown']['total_amount']} micro IOTA'),
+              _buildDetailRow('基本費用', '${_currentTrip!['fare_breakdown']['base_fare']} micro SUI'),
+              _buildDetailRow('距離費用', '${_currentTrip!['fare_breakdown']['distance_fare']} micro SUI'),
+              _buildDetailRow('總金額', '${_currentTrip!['fare_breakdown']['total_amount']} micro SUI'),
             ],
             
             const SizedBox(height: 20),
@@ -297,6 +418,44 @@ class _RealRidePageState extends State<RealRidePage> {
                       size: 40,
                     ),
                   ),
+
+                  // 停靠點標記（新增）
+                  ..._waypoints.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final waypoint = entry.value;
+                    return Marker(
+                      point: LatLng(waypoint['lat'], waypoint['lng']),
+                      width: 40,
+                      height: 40,
+                      child: Column(
+                        children: [
+                          Container(
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: Colors.orange,
+                              shape: BoxShape.circle,
+                            ),
+                            child: Center(
+                              child: Text(
+                                '${index + 1}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const Icon(
+                            Icons.location_on,
+                            color: Colors.orange,
+                            size: 16,
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
 
                   // 目的地標記
                   if (_destination != null)
@@ -391,10 +550,127 @@ class _RealRidePageState extends State<RealRidePage> {
             ),
           ),
 
+          // 停靠點管理 UI（新增）
+          if (_destination != null && !_confirmed)
+            Positioned(
+              top: 120,
+              left: 20,
+              right: 20,
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        const Text(
+                          '停靠點',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          '${_waypoints.length}/5',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+
+                    // 停靠點列表
+                    if (_waypoints.isNotEmpty)
+                      ...List.generate(_waypoints.length, (index) {
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 12,
+                                backgroundColor: Colors.orange,
+                                child: Text(
+                                  '${index + 1}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _waypoints[index]['address'],
+                                  style: const TextStyle(color: Colors.white),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close, size: 18),
+                                color: Colors.red,
+                                onPressed: () => _removeWaypoint(index),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+
+                    // 添加停靠點輸入
+                    if (_waypoints.length < 5)
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _waypointController,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
+                                hintText: '添加停靠點...',
+                                hintStyle: TextStyle(color: Colors.white54),
+                                filled: true,
+                                fillColor: Colors.white.withValues(alpha: 0.1),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  borderSide: BorderSide.none,
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                              ),
+                              onSubmitted: _addWaypoint,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            onPressed: () => _addWaypoint(_waypointController.text),
+                            icon: const Icon(Icons.add_circle),
+                            color: Colors.green,
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            ),
+
           // 行程預估信息
           if (_tripEstimate != null)
             Positioned(
-              top: 120,
+              top: _waypoints.isEmpty ? 120 : 280,
               left: 20,
               right: 20,
               child: Container(
@@ -419,7 +695,7 @@ class _RealRidePageState extends State<RealRidePage> {
                       style: const TextStyle(color: Colors.white70),
                     ),
                     Text(
-                      '預估費用: ${_tripEstimate!['estimated_fare']['total_amount']} micro IOTA',
+                      '預估費用: ${_tripEstimate!['estimated_fare']['total_amount']} micro SUI',
                       style: const TextStyle(color: Colors.white70),
                     ),
                     Text(

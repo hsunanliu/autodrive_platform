@@ -8,16 +8,18 @@ from .review import Review
 from .payment import PaymentMethod, PaymentTransaction
 from .refund import RefundRequest
 from .admin_user import AdminUser
+from .waypoint import TripWaypoint
 
 # 確保所有模型都被導入，這樣 Base.metadata 才能找到它們
 __all__ = [
-    "Base", 
-    "User", 
-    "Vehicle", 
-    "Trip", 
-    "Review", 
-    "PaymentMethod", 
+    "Base",
+    "User",
+    "Vehicle",
+    "Trip",
+    "Review",
+    "PaymentMethod",
     "PaymentTransaction",
     "RefundRequest",
-    "AdminUser"
+    "AdminUser",
+    "TripWaypoint"
 ]

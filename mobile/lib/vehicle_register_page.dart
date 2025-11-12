@@ -186,7 +186,7 @@ class _RegisterVehiclePageState extends State<RegisterVehiclePage> {
                 children: [
                   TileLayer(
                     urlTemplate:
-                        'https://api.mapbox.com/styles/v1/mapbox/light-v11/tiles/{z}/{x}/{y}@2x?access_token=$mapboxAccessToken',
+                        osmTileUrl,
                     userAgentPackageName: 'com.autodrive.driver',
                   ),
                   MarkerLayer(

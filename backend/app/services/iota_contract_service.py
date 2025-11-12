@@ -132,7 +132,7 @@ class IOTAContractService:
         license_plate: str,
         model: str,
         is_autonomous: bool = True,
-        hourly_rate: int = 100000  # micro IOTA
+        hourly_rate: int = 100000  # micro SUI
     ) -> Dict[str, Any]:
         """調用 vehicle_registry::register_vehicle"""
         try:

@@ -7,6 +7,7 @@ import RefundManagement from './pages/RefundManagement';
 import VehicleManagement from './pages/VehicleManagement';
 import UserManagement from './pages/UserManagement';
 import TripDetails from './pages/TripDetails';
+import OrderCenter from './pages/OrderCenter';
 import './App.css';
 
 function App() {
@@ -51,6 +52,14 @@ function App() {
           element={
             <ProtectedRoute>
               <TripDetails />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/orders"
+          element={
+            <ProtectedRoute>
+              <OrderCenter />
             </ProtectedRoute>
           }
         />

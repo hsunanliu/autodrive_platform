@@ -21,7 +21,7 @@ class ContractVehicleRegister(BaseModel):
     license_plate: str = Field(..., description="車牌號")
     model: str = Field(..., description="車輛型號")
     is_autonomous: bool = Field(True, description="是否自動駕駛")
-    hourly_rate: int = Field(100000, description="每小時費率(micro IOTA)")
+    hourly_rate: int = Field(100000, description="每小時費率(micro SUI)")
     
     @validator('hourly_rate')
     def validate_rate(cls, v):
@@ -34,7 +34,7 @@ class ContractRideRequest(BaseModel):
     pickup_lng: float = Field(..., description="上車經度")
     dest_lat: float = Field(..., description="目的地緯度")
     dest_lng: float = Field(..., description="目的地經度")
-    max_price: int = Field(..., description="最高價格(micro IOTA)")
+    max_price: int = Field(..., description="最高價格(micro SUI)")
     passenger_count: int = Field(1, description="乘客數量")
     
     @validator('passenger_count')

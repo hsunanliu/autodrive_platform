@@ -12,14 +12,14 @@ from sqlalchemy.orm import relationship
 class User(Base):
     """
     用戶模型 - 結合傳統與區塊鏈身份
-    
+
     主要特色：
-    1. Web3 身份：錢包地址、DID 標識符、智能合約對象ID
-    2. Web2 兼容：用戶名、郵箱、密碼（可選）
+    1. Web3 身份：錢包地址、DID 標識符（未來支援）、智能合約對象ID
+    2. Web2 兼容：用戶名、郵箱、密碼認證
     3. 業務邏輯：角色管理、信譽分數、統計數據
+    4. 推送通知：FCM Token 支援
     """
     __tablename__ = "users"
-    #__table_args__ = {"extend_existing": True}  # ✅ 允許重複定義
     
     # === 主鍵 ===
     id = Column(Integer, primary_key=True, index=True, comment="用戶 ID（自動遞增）")
@@ -81,20 +81,14 @@ class User(Base):
         nullable=True,
         comment="密碼鹽值"
     )
-    
-    # === 錢包管理（後端託管模式）===
-    public_key = Column(
-        String(66),
+
+    # === 推送通知 ===
+    fcm_token = Column(
+        String(255),
         nullable=True,
-        comment="錢包公鑰"
+        comment="Firebase Cloud Messaging Token（用於推送通知）"
     )
-    
-    encrypted_private_key = Column(
-        Text,
-        nullable=True,
-        comment="加密的私鑰（JSON 格式，包含 encrypted_key 和 salt）"
-    )
-    
+
     # === 角色與權限 ===
     user_type = Column(
         String(20), 
@@ -146,11 +140,11 @@ class User(Base):
         comment="總行駛距離（公里）"
     )
     
-    total_earnings_micro_iota = Column(
+    total_earnings_micro_sui = Column(
         String(50),
         default="0",
         nullable=False,
-        comment="總收入（micro IOTA，用字符串存儲避免精度問題）"
+        comment="總收入（micro SUI，用字符串存儲避免精度問題）"
     )
     
     # === 個人資料 ===
@@ -159,19 +153,7 @@ class User(Base):
         nullable=True,
         comment="顯示名稱（可以包含中文、特殊字符）"
     )
-    
-    bio = Column(
-        Text,
-        nullable=True,
-        comment="個人簡介"
-    )
-    
-    avatar_url = Column(
-        String(500),
-        nullable=True,
-        comment="頭像 URL"
-    )
-    
+
     # === 隱私設置 ===
     privacy_settings = Column(
         Text,  # 存儲 JSON

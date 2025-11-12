@@ -5,8 +5,11 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 import 'payment_page.dart';
+import 'role_select_page.dart';
 import 'services/api_service.dart';
 import 'services/google_places_service.dart';
+import 'services/websocket_service.dart';
+import 'services/price_service.dart';
 import 'session_manager.dart';
 import 'trip_history_page.dart';
 import 'widgets/google_place_search_field.dart';
@@ -25,28 +28,164 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
   final TextEditingController _searchController = TextEditingController();
   final LatLng _userLocation = const LatLng(25.0330, 121.5654);
 
-  List<Map<String, dynamic>> _vehicles = [];
-  Map<String, dynamic>? _selectedVehicle;
+  // ✅ 移除不再使用的車輛相關變量
   Map<String, dynamic>? _tripEstimate;
   LatLng? _destination;
   String? _destinationAddress;
   Map<String, dynamic>? _activeTrip;
+  bool _useDynamicPricing = false; // 用戶選擇的定價方式
 
-  bool _isLoadingVehicles = false;
   bool _isRequestingRide = false;
   Timer? _pollingTimer;
   String? _statusMessage;
+  final WebSocketService _ws = WebSocketService();
+
+  // 🚗 司機位置追蹤
+  LatLng? _driverLocation;
+
+  // 🗺️ 路線數據
+  List<LatLng> _routePoints = [];
+  List<Map<String, dynamic>> _waypoints = [];
 
   @override
   void initState() {
     super.initState();
     _checkActiveTrip();
-    _loadNearbyVehicles(initial: true);
-    _pollingTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    // ✅ 移除車輛加載 - 不再需要選擇車輛
+    _setupWebSocket();
+  }
+
+  /// 設置 WebSocket 事件監聽
+  void _setupWebSocket() {
+    // 監聽行程被司機接受
+    _ws.on('trip_accepted', (data) {
+      print('📨 乘客端收到行程已被接受: $data');
       if (mounted) {
-        _loadNearbyVehicles();
+        setState(() {
+          _statusMessage = '司機已接單！';
+        });
+        _checkActiveTrip();
       }
     });
+
+    // 監聽行程開始
+    _ws.on('trip_started', (data) {
+      print('📨 乘客端收到行程已開始: $data');
+      if (mounted) {
+        setState(() {
+          _statusMessage = '行程進行中';
+        });
+        _checkActiveTrip();
+      }
+    });
+
+    // 監聽行程完成
+    _ws.on('trip_completed', (data) {
+      print('📨 乘客端收到行程已完成: $data');
+      if (mounted) {
+        setState(() {
+          _activeTrip = null;
+          _statusMessage = '行程已完成';
+          _routePoints = [];
+          _waypoints = [];
+          _driverLocation = null;
+        });
+      }
+    });
+
+    // 監聽行程取消
+    _ws.on('trip_cancelled', (data) {
+      print('📨 乘客端收到行程已取消: $data');
+      if (mounted) {
+        setState(() {
+          _activeTrip = null;
+          _statusMessage = '行程已取消';
+          _driverLocation = null; // 清除司機位置
+          _routePoints = [];
+          _waypoints = [];
+        });
+
+        // 顯示取消通知
+        final cancelledBy = data['cancelled_by'] ?? 'unknown';
+        final reason = data['reason'] ?? '未提供原因';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              cancelledBy == 'driver'
+                  ? '❌ 司機取消了行程\n原因：$reason'
+                  : '✓ 行程已取消',
+            ),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    });
+
+    // 🚗 監聽司機位置更新
+    _ws.on('driver_location_update', (data) {
+      print('📍 乘客端收到司機位置更新: $data');
+      if (mounted && _activeTrip != null) {
+        final lat = data['lat'];
+        final lng = data['lng'];
+
+        if (lat != null && lng != null) {
+          setState(() {
+            _driverLocation = LatLng(
+              lat is double ? lat : double.parse(lat.toString()),
+              lng is double ? lng : double.parse(lng.toString()),
+            );
+          });
+
+          // 自動移動地圖跟隨司機位置
+          try {
+            _mapController.move(_driverLocation!, _mapController.camera.zoom);
+          } catch (e) {
+            print('⚠️ 地圖移動錯誤: $e');
+          }
+        }
+      }
+    });
+  }
+
+  /// 載入行程路線數據
+  Future<void> _loadTripRoute(int tripId) async {
+    print('🗺️ 載入行程 $tripId 的路線...');
+
+    try {
+      final result = await ApiService.getTripRoute(tripId);
+
+      if (!mounted) return;
+
+      if (result['success'] == true && result['route_points'] != null) {
+        final routePointsData = result['route_points'] as List;
+        final routePoints = routePointsData
+            .map((p) => LatLng(p['lat'] as double, p['lng'] as double))
+            .toList();
+
+        final waypointsData = result['waypoints'] as List? ?? [];
+
+        setState(() {
+          _routePoints = routePoints;
+          _waypoints = waypointsData.cast<Map<String, dynamic>>();
+        });
+
+        print('✅ 路線載入成功: ${routePoints.length} 個點, ${waypointsData.length} 個停靠點');
+
+        // 調整地圖視角以顯示完整路線
+        if (routePoints.isNotEmpty) {
+          try {
+            _mapController.move(routePoints.first, 13);
+          } catch (e) {
+            print('⚠️ 地圖移動失敗: $e');
+          }
+        }
+      } else {
+        print('❌ 路線載入失敗: ${result['error']}');
+      }
+    } catch (e) {
+      print('❌ 路線載入錯誤: $e');
+    }
   }
 
   Future<void> _checkActiveTrip() async {
@@ -76,6 +215,9 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
             _activeTrip = trip as Map<String, dynamic>;
             _statusMessage = '您有進行中的行程（狀態：$status）';
             print('✅ 找到進行中的行程: ${trip['trip_id']}');
+
+            // 載入路線數據
+            _loadTripRoute(trip['trip_id']);
             break;
           }
         }
@@ -93,6 +235,19 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
     if (_activeTrip == null) return;
 
     final tripId = _activeTrip!['trip_id'];
+    final status = _activeTrip!['status'] ?? 'requested';
+
+    // 根據行程狀態決定提示訊息
+    String warningMessage;
+    if (status == 'picked_up' || status == 'in_progress') {
+      warningMessage = '⚠️ 注意：行程已開始，取消將不會退款\n\n'
+          '費用將支付給車輛運營方。\n'
+          '如有服務問題，請在行程完成後申請退款。';
+    } else if (status == 'accepted') {
+      warningMessage = '車輛尚未到達，取消後將全額退款。';
+    } else {
+      warningMessage = '確定要取消當前行程嗎？';
+    }
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -100,9 +255,9 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
           (context) => AlertDialog(
             backgroundColor: const Color(0xFF2E2E2E),
             title: const Text('取消行程', style: TextStyle(color: Colors.white)),
-            content: const Text(
-              '確定要取消當前行程嗎？',
-              style: TextStyle(color: Colors.white70),
+            content: Text(
+              warningMessage,
+              style: const TextStyle(color: Colors.white70, fontSize: 15),
             ),
             actions: [
               TextButton(
@@ -112,7 +267,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
               TextButton(
                 onPressed: () => Navigator.pop(context, true),
                 style: TextButton.styleFrom(foregroundColor: Colors.red),
-                child: const Text('取消行程'),
+                child: const Text('確認取消'),
               ),
             ],
           ),
@@ -134,6 +289,9 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
       setState(() {
         _activeTrip = null;
         _statusMessage = '行程已取消';
+        _routePoints = [];
+        _waypoints = [];
+        _driverLocation = null;
       });
     } else {
       setState(() {
@@ -142,46 +300,62 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
     }
   }
 
+  /// 乘客確認上車（自駕車到達後）
+  Future<void> _confirmPickup() async {
+    if (_activeTrip == null) return;
+
+    final tripId = _activeTrip!['trip_id'];
+
+    setState(() => _statusMessage = '正在確認上車...');
+
+    final result = await ApiService.pickupPassenger(tripId);
+
+    if (!mounted) return;
+
+    if (result['success'] == true) {
+      setState(() {
+        if (_activeTrip != null) {
+          _activeTrip!['status'] = 'picked_up';
+        }
+        _statusMessage = '已確認上車，行程開始';
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('✅ 已確認上車，行程開始'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } else {
+      setState(() {
+        _statusMessage = '確認失敗：${result['error']}';
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ 確認上車失敗: ${result['error']}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   @override
   void dispose() {
     _pollingTimer?.cancel();
     _searchController.dispose();
+    // 移除 WebSocket 監聽器
+    _ws.off('trip_accepted');
+    _ws.off('trip_started');
+    _ws.off('trip_completed');
+    _ws.off('trip_cancelled');
+    _ws.off('driver_location_update');
     super.dispose();
   }
 
   UserSession? get _session => widget.session;
 
-  Future<void> _loadNearbyVehicles({bool initial = false}) async {
-    if (_session == null) return;
-    setState(() {
-      if (initial) {
-        _statusMessage = '載入附近車輛...';
-      }
-      _isLoadingVehicles = true;
-    });
-
-    final result = await ApiService.getAvailableVehicles(
-      lat: _userLocation.latitude,
-      lng: _userLocation.longitude,
-      radiusKm: 4,
-      limit: 12,
-    );
-
-    if (!mounted) return;
-
-    setState(() {
-      _isLoadingVehicles = false;
-      if (result['success'] == true && result['data'] is List) {
-        _vehicles = (result['data'] as List)
-            .whereType<Map<String, dynamic>>()
-            .toList(growable: false);
-        _statusMessage = '找到 ${_vehicles.length} 輛可用車輛';
-      } else {
-        _vehicles = [];
-        _statusMessage = result['error']?.toString() ?? '無法取得可用車輛';
-      }
-    });
-  }
+  // ✅ 移除車輛加載方法 - 不再需要選擇車輛
 
   Future<void> _loadTripEstimate() async {
     if (_destination == null) return;
@@ -223,8 +397,9 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
       return;
     }
 
-    if (_session == null || _destination == null || _selectedVehicle == null) {
-      setState(() => _statusMessage = '請先選擇目的地與車輛');
+    // ✅ 移除車輛選擇要求，配對系統會自動找司機
+    if (_session == null || _destination == null) {
+      setState(() => _statusMessage = '請先選擇目的地');
       return;
     }
 
@@ -241,7 +416,8 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
       dropoffLng: _destination!.longitude,
       dropoffAddress: _destinationAddress ?? _searchController.text,
       passengerCount: 1,
-      preferredVehicleType: _selectedVehicle?['vehicle_type']?.toString(),
+      useDynamicPricing: _useDynamicPricing,
+      preferredVehicleType: null, // ✅ 不再需要選擇車輛
       notes: 'AutoDrive 乘客端叫車',
     );
 
@@ -258,10 +434,16 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
         _statusMessage = '叫車成功！行程 ID: ${trip['trip_id']}';
       });
 
-      // 獲取費用（從 trip 或 _tripEstimate）
+      // 獲取費用（根據用戶選擇的定價方式）
       int? fareAmount;
-      if (_tripEstimate != null && _tripEstimate!['estimated_fare'] is Map) {
-        fareAmount = _tripEstimate!['estimated_fare']['total_amount'] as int?;
+      if (_tripEstimate != null) {
+        if (_useDynamicPricing && _tripEstimate!['dynamic_fare'] is Map) {
+          // 使用動態定價
+          fareAmount = _tripEstimate!['dynamic_fare']['total_amount'] as int?;
+        } else if (_tripEstimate!['standard_fare'] is Map) {
+          // 使用標準定價
+          fareAmount = _tripEstimate!['standard_fare']['total_amount'] as int?;
+        }
       }
       fareAmount ??= trip['fare'] as int?;
       
@@ -280,7 +462,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
                     trip['dropoff_address'] ??
                     _destinationAddress ??
                     _searchController.text,
-                vehicleId: _selectedVehicle?['vehicle_id']?.toString(),
+                vehicleId: null, // ✅ 不再需要車輛 ID
               ),
         ),
       ).then((_) {
@@ -297,6 +479,60 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
     }
   }
 
+  void _goToPayment() {
+    if (_activeTrip == null) return;
+
+    final trip = _activeTrip!;
+
+    // 三層金額檢測邏輯：將金額轉換為 MIST 格式傳給支付頁面
+    int? fareAmountMist;
+    final rawFare = trip['fare'] ?? trip['total_amount'];
+
+    if (rawFare is num) {
+      if (rawFare > 100000000) {
+        // 已經是 MIST 格式
+        fareAmountMist = rawFare.toInt();
+        print('💰 金額格式：MIST (> 100M) - $rawFare');
+      } else if (rawFare > 1000) {
+        // 錯誤的中間格式，需要轉換為 MIST
+        fareAmountMist = (rawFare * 1000).toInt();
+        print('💰 金額格式：中間格式 (> 1000) - $rawFare -> $fareAmountMist MIST');
+      } else {
+        // SUI 格式，轉換為 MIST
+        fareAmountMist = (rawFare * 1000000000).toInt();
+        print('💰 金額格式：SUI (< 1000) - $rawFare -> $fareAmountMist MIST');
+      }
+    }
+
+    // 獲取司機錢包地址（如果有）
+    String? driverWallet = trip['driver_wallet'];
+
+    // 如果沒有司機錢包地址，嘗試從 driver_info 中獲取
+    if (driverWallet == null && trip['driver_info'] != null) {
+      driverWallet = trip['driver_info']['wallet_address'];
+    }
+
+    print('💼 司機錢包地址: ${driverWallet ?? "未提供"}');
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PaymentPage(
+          session: _session,
+          tripId: trip['trip_id'],
+          fare: fareAmountMist,
+          startAddress: trip['pickup_address'] ?? '當前位置',
+          endAddress: trip['dropoff_address'] ?? '目的地',
+          vehicleId: trip['vehicle_id'],
+          driverWallet: driverWallet,
+        ),
+      ),
+    ).then((_) {
+      // 從支付頁面返回後重新檢查行程狀態
+      _checkActiveTrip();
+    });
+  }
+
   void _openTripHistory() {
     if (_session == null) return;
     Navigator.push(
@@ -307,6 +543,52 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
 
   void _openProfile() {
     Navigator.pushNamed(context, '/profile', arguments: {'session': _session});
+  }
+
+  /// 登出並返回角色選擇頁面
+  Future<void> _handleLogout() async {
+    // 顯示確認對話框
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF2A2A2A),
+          title: const Text('確認登出', style: TextStyle(color: Colors.white)),
+          content: const Text(
+            '確定要登出嗎？您可以重新選擇身份登入。',
+            style: TextStyle(color: Colors.white70),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('登出', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm != true) return;
+
+    // 清除 Session
+    await SessionManager.clearSession();
+    ApiService.clearToken();
+
+    // 斷開 WebSocket 連接
+    _ws.disconnect();
+
+    if (!mounted) return;
+
+    // 使用 pushAndRemoveUntil 清空導航堆疊並返回角色選擇頁面
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const RoleSelectPage()),
+      (route) => false,
+    );
   }
 
   @override
@@ -326,6 +608,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
 
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: false, // 移除左上角的返回按鈕
         title: const Text('乘客首頁'),
         actions: [
           if (_activeTrip != null)
@@ -362,6 +645,27 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
             tooltip: '個人檔案',
             onPressed: _openProfile,
           ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: '更多選項',
+            onSelected: (value) {
+              if (value == 'logout') {
+                _handleLogout();
+              }
+            },
+            itemBuilder: (BuildContext context) => [
+              const PopupMenuItem<String>(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(Icons.logout, color: Colors.red),
+                    SizedBox(width: 8),
+                    Text('登出 / 切換身份', style: TextStyle(color: Colors.red)),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
       body: Column(
@@ -395,7 +699,19 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
                   urlTemplate:
                       'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=pk.eyJ1IjoiaHkxaWlpIiwiYSI6ImNtZW4wcHdraDB3a3Mya3Nlc29mNGY3ZHAifQ.c1EtA8uDOpR7Q2-uPVJSaA',
                   userAgentPackageName: 'com.autodrive.app',
+                  // 使用默認的 NetworkTileProvider，不傳遞 httpClient
                 ),
+                // 🗺️ 路線顯示
+                if (_routePoints.isNotEmpty)
+                  PolylineLayer(
+                    polylines: [
+                      Polyline(
+                        points: _routePoints,
+                        color: Colors.blue,
+                        strokeWidth: 4,
+                      ),
+                    ],
+                  ),
                 MarkerLayer(
                   markers: [
                     Marker(
@@ -419,26 +735,65 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
                           size: 28,
                         ),
                       ),
-                    ..._vehicles.map((vehicle) {
-                      final lat =
-                          (vehicle['location_lat'] ?? vehicle['current_lat'])
-                              ?.toDouble();
-                      final lng =
-                          (vehicle['location_lng'] ?? vehicle['current_lng'])
-                              ?.toDouble();
-                      if (lat == null || lng == null) {
-                        return null;
-                      }
-                      return Marker(
-                        point: LatLng(lat, lng),
-                        width: 32,
-                        height: 32,
-                        child: const Icon(
-                          Icons.directions_car,
-                          color: Colors.lightBlueAccent,
+                    // 🗺️ 停靠點標記
+                    if (_waypoints.isNotEmpty)
+                      ..._waypoints.map((waypoint) {
+                        final wpLat = waypoint['lat'] as double;
+                        final wpLng = waypoint['lng'] as double;
+                        final sequence = waypoint['sequence'] as int;
+
+                        return Marker(
+                          point: LatLng(wpLat, wpLng),
+                          width: 40,
+                          height: 40,
+                          child: Column(
+                            children: [
+                              Container(
+                                width: 24,
+                                height: 24,
+                                decoration: const BoxDecoration(
+                                  color: Colors.orange,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    '$sequence',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const Icon(
+                                Icons.location_on,
+                                color: Colors.orange,
+                                size: 16,
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    // 🚗 顯示司機位置（行程進行中時）
+                    if (_driverLocation != null)
+                      Marker(
+                        point: _driverLocation!,
+                        width: 44,
+                        height: 44,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.2),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.directions_car,
+                            color: Colors.blue,
+                            size: 32,
+                          ),
                         ),
-                      );
-                    }).whereType<Marker>(),
+                      ),
+                    // ✅ 移除車輛標記 - 不再顯示附近車輛
                   ],
                 ),
               ],
@@ -453,9 +808,52 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
   Widget _buildBottomSheet() {
     // 如果有進行中的行程，顯示行程狀態
     if (_activeTrip != null) {
+      final status = _activeTrip!['status'] ?? 'requested';
+
+      // 定義狀態映射
+      String getStatusText(String status) {
+        switch (status) {
+          case 'requested':
+            return '🔍 等待配對車輛...';
+          case 'matched':
+            return '🚗 車輛已配對';
+          case 'accepted':
+            return '✅ 車輛已到達，請確認上車';
+          case 'in_progress':
+            return '🚗 前往目的地中';
+          case 'picked_up':
+            return '🎯 行程進行中';
+          case 'completed':
+            return '✅ 行程已完成';
+          default:
+            return '行程狀態：$status';
+        }
+      }
+
+      // 計算進度（0-4 步驟）
+      int getProgressStep(String status) {
+        switch (status) {
+          case 'requested':
+            return 0;
+          case 'matched':
+          case 'accepted':
+            return 1;
+          case 'in_progress':
+            return 2;
+          case 'picked_up':
+            return 3;
+          case 'completed':
+            return 4;
+          default:
+            return 0;
+        }
+      }
+
+      final currentStep = getProgressStep(status);
+
       return Container(
         constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.3,
+          maxHeight: MediaQuery.of(context).size.height * 0.45,
         ),
         decoration: const BoxDecoration(
           color: Color(0xFF1E1E1E),
@@ -469,43 +867,136 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
           ],
         ),
         padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(
-                  Icons.local_taxi,
-                  color: Color(0xFF1DB954),
-                  size: 24,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        '進行中的行程',
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(
+                    Icons.local_taxi,
+                    color: Color(0xFF1DB954),
+                    size: 24,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '進行中的行程',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          getStatusText(status),
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 13,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+
+              // 🔥 行程進度指示器
+              _buildTripProgressIndicator(currentStep),
+
+              const SizedBox(height: 16),
+
+              // 🗺️ 查看地圖按鈕（顯示行程路線和司機位置）
+              if (status != 'requested')
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () => _showTripMapDialog(),
+                      icon: const Icon(Icons.map, color: Colors.white),
+                      label: const Text(
+                        '查看行程地圖',
                         style: TextStyle(
-                          color: Colors.white,
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
+                          color: Colors.white,
                         ),
                       ),
-                      Text(
-                        '狀態：${_activeTrip!['status'] ?? '未知'}',
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 13,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1DB954),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 16),
+
+            // 如果行程狀態是 accepted，顯示確認上車按鈕（自駕車到達）
+            if (_activeTrip!['status'] == 'accepted')
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _confirmPickup,
+                    icon: const Icon(Icons.check_circle, color: Colors.white),
+                    label: const Text(
+                      '確認上車（車輛已到達）',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1DB954),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+
+            // 如果行程狀態是 picked_up，顯示支付按鈕
+            if (_activeTrip!['status'] == 'picked_up')
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _goToPayment,
+                    icon: const Icon(Icons.payment, color: Colors.white),
+                    label: const Text(
+                      '前往支付',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             Row(
               children: [
                 Expanded(
@@ -553,8 +1044,9 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
             ),
           ],
         ),
-      );
-    }
+      ),
+    );
+  }
 
     // 正常的叫車界面
     return SafeArea(
@@ -592,7 +1084,15 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
             ),
             const SizedBox(height: 6),
             if (_tripEstimate != null)
-              _TripEstimateView(estimate: _tripEstimate!),
+              _TripEstimateView(
+                estimate: _tripEstimate!,
+                selectedDynamic: _useDynamicPricing,
+                onPricingSelected: (isDynamic) {
+                  setState(() {
+                    _useDynamicPricing = isDynamic;
+                  });
+                },
+              ),
             if (_statusMessage != null && _tripEstimate == null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
@@ -604,40 +1104,14 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
                 ),
               ),
             const SizedBox(height: 6),
-            if (_vehicles.isNotEmpty)
-              SizedBox(
-                height: 65,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemBuilder: (_, index) {
-                    final vehicle = _vehicles[index];
-                    final selected = identical(vehicle, _selectedVehicle);
-                    return _VehicleChip(
-                      vehicle: vehicle,
-                      selected: selected,
-                      onTap: () => setState(() => _selectedVehicle = vehicle),
-                    );
-                  },
-                  separatorBuilder: (_, __) => const SizedBox(width: 10),
-                  itemCount: _vehicles.length,
-                ),
-              ),
-            if (_isLoadingVehicles)
-              const SizedBox(
-                height: 65,
-                child: Center(
-                  child: CircularProgressIndicator(color: Color(0xFF1DB954)),
-                ),
-              ),
+            // ✅ 移除車輛選擇 UI - 配對系統會自動找司機
             const SizedBox(height: 6),
             Row(
               children: [
                 Expanded(
                   child: ElevatedButton(
                     onPressed:
-                        (_isRequestingRide ||
-                                _destination == null ||
-                                _selectedVehicle == null)
+                        (_isRequestingRide || _destination == null)
                             ? null
                             : _requestRide,
                     style: ElevatedButton.styleFrom(
@@ -668,19 +1142,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
                             ),
                   ),
                 ),
-                const SizedBox(width: 10),
-                ElevatedButton(
-                  onPressed: _isLoadingVehicles ? null : _loadNearbyVehicles,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2E2E2E),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.all(13),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: const Icon(Icons.refresh, size: 18),
-                ),
+                // ✅ 移除刷新車輛按鈕 - 不再需要選擇車輛
               ],
             ),
           ],
@@ -688,95 +1150,480 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
       ),
     );
   }
+
+  /// 🗺️ 顯示行程地圖對話框
+  Future<void> _showTripMapDialog() async {
+    if (_activeTrip == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('❌ 無法載入行程資訊'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // 🔥 先獲取完整的行程詳情（包含座標）
+    final tripId = _activeTrip!['trip_id'];
+    print('🗺️ 獲取行程詳情以顯示地圖: Trip ID $tripId');
+
+    final detailResult = await ApiService.getTripDetails(tripId);
+
+    if (!mounted) return;
+
+    if (detailResult['success'] != true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('❌ 無法載入行程詳情: ${detailResult['error']}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final tripDetail = detailResult['data'] as Map<String, dynamic>;
+    print('🗺️ 行程詳情: ${tripDetail.keys}');
+
+    final pickupLat = tripDetail['pickup_lat'];
+    final pickupLng = tripDetail['pickup_lng'];
+    final dropoffLat = tripDetail['dropoff_lat'];
+    final dropoffLng = tripDetail['dropoff_lng'];
+
+    print('🗺️ 座標資料 - pickup: ($pickupLat, $pickupLng), dropoff: ($dropoffLat, $dropoffLng)');
+
+    if (pickupLat == null || pickupLng == null || dropoffLat == null || dropoffLng == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('❌ 行程座標資料不完整，無法顯示地圖'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final pickupPoint = LatLng(pickupLat.toDouble(), pickupLng.toDouble());
+    final dropoffPoint = LatLng(dropoffLat.toDouble(), dropoffLng.toDouble());
+
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(10),
+        child: Container(
+          height: MediaQuery.of(context).size.height * 0.8,
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E1E1E),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Column(
+            children: [
+              // 標題欄
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: const BoxDecoration(
+                  color: Color(0xFF2A2A2A),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.map, color: Color(0xFF1DB954)),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Text(
+                        '行程地圖',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close, color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+              // 地圖
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: const BorderRadius.vertical(bottom: Radius.circular(18)),
+                  child: FlutterMap(
+                    options: MapOptions(
+                      initialCenter: pickupPoint,
+                      initialZoom: 13.0,
+                    ),
+                    children: [
+                      TileLayer(
+                        urlTemplate: 'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=pk.eyJ1IjoiaHkxaWlpIiwiYSI6ImNtZW4wcHdraDB3a3Mya3Nlc29mNGY3ZHAifQ.c1EtA8uDOpR7Q2-uPVJSaA',
+                        userAgentPackageName: 'com.autodrive.app',
+                      ),
+                      // 標記層
+                      MarkerLayer(
+                        markers: [
+                          // 起點標記
+                          Marker(
+                            point: pickupPoint,
+                            width: 40,
+                            height: 40,
+                            child: const Icon(
+                              Icons.location_on,
+                              color: Color(0xFF1DB954),
+                              size: 40,
+                            ),
+                          ),
+                          // 終點標記
+                          Marker(
+                            point: dropoffPoint,
+                            width: 40,
+                            height: 40,
+                            child: const Icon(
+                              Icons.flag,
+                              color: Colors.red,
+                              size: 40,
+                            ),
+                          ),
+                          // 司機位置標記（如果有）
+                          if (_driverLocation != null)
+                            Marker(
+                              point: _driverLocation!,
+                              width: 50,
+                              height: 50,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.blue,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white, width: 3),
+                                ),
+                                child: const Icon(
+                                  Icons.local_taxi,
+                                  color: Colors.white,
+                                  size: 25,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      // 路線層（起點到終點的直線）
+                      PolylineLayer(
+                        polylines: [
+                          Polyline(
+                            points: [pickupPoint, dropoffPoint],
+                            strokeWidth: 4.0,
+                            color: const Color(0xFF1DB954),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 🔥 行程進度指示器
+  Widget _buildTripProgressIndicator(int currentStep) {
+    final steps = [
+      {'icon': Icons.search, 'label': '等待接單'},
+      {'icon': Icons.check_circle, 'label': '司機已接'},
+      {'icon': Icons.directions_car, 'label': '前往中'},
+      {'icon': Icons.person, 'label': '行程中'},
+      {'icon': Icons.flag, 'label': '已完成'},
+    ];
+
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: List.generate(steps.length, (index) {
+            final isActive = index <= currentStep;
+            final step = steps[index];
+
+            return Expanded(
+              child: Column(
+                children: [
+                  // 圖標
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: isActive
+                          ? const Color(0xFF1DB954)
+                          : Colors.grey.shade700,
+                    ),
+                    child: Icon(
+                      step['icon'] as IconData,
+                      color: isActive ? Colors.black : Colors.white54,
+                      size: 18,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  // 標籤
+                  Text(
+                    step['label'] as String,
+                    style: TextStyle(
+                      color: isActive ? Colors.white : Colors.white38,
+                      fontSize: 10,
+                      fontWeight: isActive ? FontWeight.bold : FontWeight.normal,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 8),
+        // 進度條
+        LinearProgressIndicator(
+          value: currentStep / (steps.length - 1),
+          backgroundColor: Colors.grey.shade700,
+          valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF1DB954)),
+          minHeight: 4,
+        ),
+      ],
+    );
+  }
 }
 
 class _TripEstimateView extends StatelessWidget {
-  const _TripEstimateView({required this.estimate});
+  const _TripEstimateView({
+    required this.estimate,
+    required this.selectedDynamic,
+    required this.onPricingSelected,
+  });
 
   final Map<String, dynamic> estimate;
+  final bool selectedDynamic;
+  final Function(bool) onPricingSelected;
 
-  String _formatFare(dynamic fareData) {
-    if (fareData == null) return '--';
+  Widget _buildFareDisplay(dynamic fareData, {TextStyle? style}) {
+    if (fareData == null) {
+      return Text('--', style: style);
+    }
+
+    double? suiAmount;
 
     // 如果是 TripFareBreakdown 對象
     if (fareData is Map<String, dynamic>) {
       final totalAmount = fareData['total_amount'];
       if (totalAmount != null) {
-        // 從 micro SUI 轉換為 SUI (除以 1,000,000)
-        final suiAmount = (totalAmount / 1000000).toStringAsFixed(4);
-        return '$suiAmount SUI';
+        // 從 MIST 轉換為 SUI (除以 1,000,000,000)
+        suiAmount = totalAmount / 1000000000.0;
       }
     }
 
     // 如果是數字
     if (fareData is num) {
-      final suiAmount = (fareData / 1000000).toStringAsFixed(4);
-      return '$suiAmount SUI';
+      suiAmount = fareData / 1000000000.0;
     }
 
-    return fareData.toString();
+    if (suiAmount == null) {
+      return Text(fareData.toString(), style: style);
+    }
+
+    // 使用 FutureBuilder 顯示雙幣種
+    return FutureBuilder<String>(
+      future: PriceService.formatDualCurrency(suiAmount),
+      builder: (context, snapshot) {
+        return Text(
+          snapshot.data ?? '${suiAmount?.toStringAsFixed(4) ?? '--'} SUI',
+          style: style,
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    // 處理 estimated_fare 對象
-    final fareData = estimate['estimated_fare'];
     final eta = estimate['estimated_duration_minutes'];
     final distance = estimate['estimated_distance_km'];
+    final standardFare = estimate['standard_fare'];
+    final dynamicFare = estimate['dynamic_fare'];
+    final hasSurge = estimate['has_surge'] ?? false;
+    final surgeInfo = estimate['surge_info'] as Map<String, dynamic>?;
 
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.receipt_long, color: Color(0xFF1DB954), size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 行程資訊
+        Row(
+          children: [
+            if (distance != null) ...[
+              const Icon(Icons.straighten, color: Colors.white70, size: 14),
+              const SizedBox(width: 4),
+              Text(
+                '${distance.toStringAsFixed(1)} km',
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
+              ),
+              const SizedBox(width: 12),
+            ],
+            if (eta != null) ...[
+              const Icon(Icons.access_time, color: Colors.white70, size: 14),
+              const SizedBox(width: 4),
+              Text(
+                '約 $eta 分鐘',
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 8),
+
+        // 標準叫車選項
+        GestureDetector(
+          onTap: () => onPricingSelected(false),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: !selectedDynamic ? const Color(0xFF1DB954) : const Color(0xFF2A2A2A),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: !selectedDynamic ? Colors.white : Colors.transparent,
+                width: 2,
+              ),
+            ),
+            child: Row(
               children: [
-                Text(
-                  '預估金額：${_formatFare(fareData)}',
-                  style: const TextStyle(
-                    color: Colors.white,
+                Icon(
+                  Icons.local_taxi,
+                  color: !selectedDynamic ? Colors.black : Colors.white70,
+                  size: 20,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '標準叫車',
+                        style: TextStyle(
+                          color: !selectedDynamic ? Colors.black : Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        '固定價格',
+                        style: TextStyle(
+                          color: !selectedDynamic ? Colors.black87 : Colors.white70,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _buildFareDisplay(
+                  standardFare,
+                  style: TextStyle(
+                    color: !selectedDynamic ? Colors.black : Colors.white,
                     fontSize: 14,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                const SizedBox(height: 2),
-                Row(
-                  children: [
-                    if (distance != null) ...[
-                      Text(
-                        '${distance.toStringAsFixed(1)} km',
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 11,
-                        ),
-                      ),
-                      const Text(
-                        ' • ',
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                    ],
-                    if (eta != null)
-                      Text(
-                        '約 $eta 分鐘',
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 11,
-                        ),
-                      ),
-                  ],
-                ),
               ],
             ),
           ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 8),
+
+        // 快速叫車選項（動態定價）
+        GestureDetector(
+          onTap: () => onPricingSelected(true),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: selectedDynamic ? const Color(0xFF1DB954) : const Color(0xFF2A2A2A),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: selectedDynamic ? Colors.white : Colors.transparent,
+                width: 2,
+              ),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.flash_on,
+                      color: selectedDynamic ? Colors.black : const Color(0xFFFFB84D),
+                      size: 20,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '快速叫車',
+                            style: TextStyle(
+                              color: selectedDynamic ? Colors.black : Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            hasSurge ? '優先媒合 • 動態定價' : '優先媒合',
+                            style: TextStyle(
+                              color: selectedDynamic ? Colors.black87 : Colors.white70,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    _buildFareDisplay(
+                      dynamicFare,
+                      style: TextStyle(
+                        color: selectedDynamic ? Colors.black : Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                if (hasSurge && surgeInfo != null) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: selectedDynamic
+                          ? Colors.black.withOpacity(0.2)
+                          : const Color(0xFF1E1E1E),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          size: 14,
+                          color: selectedDynamic ? Colors.black87 : const Color(0xFFFFB84D),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            surgeInfo['reason'] ?? '需求較高',
+                            style: TextStyle(
+                              color: selectedDynamic ? Colors.black87 : Colors.white70,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

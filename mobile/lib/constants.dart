@@ -1,3 +1,6 @@
-const String backendUrl = 'http://localhost:8000/api/v1';
-const mapboxAccessToken = 'pk.eyJ1IjoiaHkxaWlpIiwiYSI6ImNtZW4wcHdraDB3a3Mya3Nlc29mNGY3ZHAifQ.c1EtA8uDOpR7Q2-uPVJSaA';
-const mapboxLightUrl = 'https://api.mapbox.com/styles/v1/mapbox/light-v11/tiles/{z}/{x}/{y}@2x?access_token=$mapboxAccessToken';
+// 後端 API URL
+// 真機測試時使用本機 IP，模擬器使用 localhost
+const String backendUrl = 'http://192.168.0.64:8000/api/v1';
+
+// 使用 OpenStreetMap 替代 Mapbox（免費、無需 API Key）
+const osmTileUrl = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';

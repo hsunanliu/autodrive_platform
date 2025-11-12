@@ -602,7 +602,7 @@ const UserManagement = () => {
                           <div>
                             <p style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: '600', marginBottom: '0.25rem' }}>距離</p>
                             <p style={{ fontSize: '1rem', fontWeight: '700', color: '#0f172a' }}>
-                              {trip.distance_km ? `${trip.distance_km} km` : '未知'}
+                              {trip.distance_km ? `${Number(trip.distance_km).toFixed(2)} km` : '未知'}
                             </p>
                           </div>
                           <div>

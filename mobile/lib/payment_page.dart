@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'services/api_service.dart';
 import 'session_manager.dart';
 import 'widgets/payment_dialog.dart';
+import 'widgets/one_click_payment_dialog.dart';
 
 class PaymentPage extends StatefulWidget {
   const PaymentPage({
@@ -13,6 +14,7 @@ class PaymentPage extends StatefulWidget {
     required this.endAddress,
     this.vehicleId,
     this.tripId,
+    this.driverWallet,
   });
 
   final dynamic fare;
@@ -21,6 +23,7 @@ class PaymentPage extends StatefulWidget {
   final String endAddress;
   final String? vehicleId;
   final int? tripId;
+  final String? driverWallet;
 
   @override
   State<PaymentPage> createState() => _PaymentPageState();
@@ -62,16 +65,45 @@ class _PaymentPageState extends State<PaymentPage> {
       return;
     }
 
-    // 顯示支付對話框
-    final result = await showPaymentDialog(
+    // 計算正確的 SUI 金額（使用三層檢測）
+    double amountSui = 0.0;
+    if (widget.fare != null) {
+      final rawFare = widget.fare is int
+          ? widget.fare
+          : (widget.fare is double
+              ? widget.fare
+              : num.tryParse(widget.fare.toString()));
+
+      if (rawFare != null && rawFare is num) {
+        if (rawFare > 100000000) {
+          // MIST 格式
+          amountSui = rawFare / 1000000000.0;
+        } else if (rawFare > 1000) {
+          // 錯誤的中間格式
+          amountSui = rawFare / 1000000.0;
+        } else {
+          // 已經是 SUI 格式
+          amountSui = rawFare.toDouble();
+        }
+      }
+    }
+
+    // 使用新的一鍵支付對話框（UX 優化）
+    final result = await showOneClickPaymentDialog(
       context,
       tripId: widget.tripId!,
-      amount: widget.fare is int ? (widget.fare / 1000000.0) : 0.0,
+      amountSui: amountSui,
       description: '${widget.startAddress} → ${widget.endAddress}',
+      driverWallet: widget.driverWallet,
     );
 
     if (result != null && result['success'] == true) {
-      if (result['tx_hash'] != null) {
+      if (result['manual_payment'] == true) {
+        // 手動支付模式：用戶需要自行在錢包完成支付
+        setState(() {
+          _statusMessage = result['message'] ?? '請在錢包中完成支付後，回來驗證交易';
+        });
+      } else if (result['tx_hash'] != null) {
         // 有交易 hash，驗證支付
         await _verifyPayment(result['tx_hash']);
       } else {
@@ -101,7 +133,14 @@ class _PaymentPageState extends State<PaymentPage> {
     setState(() {
       _isLoading = false;
       if (result['success'] == true) {
-        _statusMessage = '✅ 支付驗證成功！司機現在可以完成行程了';
+        final data = result['data'];
+        final isSimulated = data is Map && data['simulated'] == true;
+
+        if (isSimulated) {
+          _statusMessage = '✅ 模擬支付驗證成功！（測試模式）\n司機現在可以完成行程了';
+        } else {
+          _statusMessage = '✅ 支付驗證成功！\n司機現在可以完成行程了';
+        }
       } else {
         _statusMessage = '❌ 支付驗證失敗: ${result['error'] ?? '未知錯誤'}';
       }
@@ -158,16 +197,30 @@ class _PaymentPageState extends State<PaymentPage> {
 
   @override
   Widget build(BuildContext context) {
-    // 處理金額顯示
+    // 處理金額顯示 - 使用三層金額檢測
     String fareText = '--';
     if (widget.fare != null) {
-      final fareValue =
-          widget.fare is int
+      final rawFare = widget.fare is int
+          ? widget.fare
+          : (widget.fare is double
               ? widget.fare
-              : int.tryParse(widget.fare.toString());
-      if (fareValue != null) {
-        // 轉換為 SUI (1 SUI = 1,000,000 micro SUI)
-        final suiAmount = fareValue / 1000000.0;
+              : num.tryParse(widget.fare.toString()));
+
+      if (rawFare != null && rawFare is num) {
+        double suiAmount;
+        if (rawFare > 100000000) {
+          // MIST 格式 (> 100M)
+          suiAmount = rawFare / 1000000000.0;
+          print('💰 支付頁面金額格式：MIST - $rawFare -> $suiAmount SUI');
+        } else if (rawFare > 1000) {
+          // 錯誤的中間格式
+          suiAmount = rawFare / 1000000.0;
+          print('💰 支付頁面金額格式：中間格式 - $rawFare -> $suiAmount SUI');
+        } else {
+          // 已經是 SUI 格式
+          suiAmount = rawFare.toDouble();
+          print('💰 支付頁面金額格式：SUI - $rawFare');
+        }
         fareText = suiAmount.toStringAsFixed(4);
       }
     }

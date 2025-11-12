@@ -2,8 +2,8 @@
 
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
-import '../services/sui_wallet_connector.dart';
 import '../session_manager.dart';
+import '../main.dart'; // 使用全域 WalletConnector
 
 class RegisterWithWalletConnectPage extends StatefulWidget {
   const RegisterWithWalletConnectPage({super.key});
@@ -30,22 +30,38 @@ class _RegisterWithWalletConnectPageState
   // 開發模式：自動生成測試錢包地址
   static const bool _devMode = true;
 
-  final _walletConnector = SuiWalletConnector();
-
   @override
   void initState() {
     super.initState();
-    _walletConnector.initialize();
+    // 監聽全域 WalletConnector 的變化
+    globalWalletConnector.addListener(_onWalletChanged);
+    // 檢查是否已經連接
+    if (globalWalletConnector.isConnected) {
+      _connectedWalletAddress = globalWalletConnector.walletAddress;
+      _walletAddressController.text = _connectedWalletAddress ?? '';
+    }
   }
 
   @override
   void dispose() {
+    globalWalletConnector.removeListener(_onWalletChanged);
     _usernameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
     _walletAddressController.dispose();
     super.dispose();
+  }
+
+  void _onWalletChanged() {
+    // 當錢包連接狀態改變時更新 UI
+    if (globalWalletConnector.isConnected && mounted) {
+      setState(() {
+        _connectedWalletAddress = globalWalletConnector.walletAddress;
+        _walletAddressController.text = _connectedWalletAddress ?? '';
+      });
+      _showSuccess('✅ 錢包已連接！');
+    }
   }
 
   @override
@@ -165,7 +181,7 @@ class _RegisterWithWalletConnectPageState
                         const SizedBox(height: 12),
                         const Text(
                           '您需要一個 Sui 錢包來使用本平台。\n'
-                          '如果您還沒有錢包，請先從 App Store 安裝 Suiet 應用。',
+                          '如果您還沒有錢包，請先從 App Store 安裝 Slush Wallet 應用。',
                           style: TextStyle(fontSize: 14),
                         ),
                       ],
@@ -179,7 +195,7 @@ class _RegisterWithWalletConnectPageState
                     child: ElevatedButton.icon(
                       onPressed: _connectWallet,
                       icon: const Icon(Icons.account_balance_wallet),
-                      label: const Text('連接 Suiet Wallet'),
+                      label: const Text('連接 Slush Wallet'),
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.all(16),
                       ),
@@ -393,16 +409,16 @@ class _RegisterWithWalletConnectPageState
     setState(() => _isLoading = true);
 
     try {
-      final result = await _walletConnector.connectWallet();
+      final result = await globalWalletConnector.connectWallet();
 
       if (result['success'] == true) {
         if (result['pending'] == true) {
-          _showInfo('請在 Suiet Wallet 中授權連接');
+          _showInfo('請在 Slush Wallet 中授權連接');
           // 等待用戶在錢包中授權
-          // 實際應用中需要監聽 Deep Link 回調
-        } else if (_walletConnector.walletAddress != null) {
+          // Deep Link 回調會觸發 _onWalletChanged
+        } else if (globalWalletConnector.walletAddress != null) {
           setState(() {
-            _connectedWalletAddress = _walletConnector.walletAddress;
+            _connectedWalletAddress = globalWalletConnector.walletAddress;
             _walletAddressController.text = _connectedWalletAddress!;
           });
           _showSuccess('錢包連接成功');

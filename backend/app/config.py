@@ -34,7 +34,8 @@ class Settings(BaseSettings):
     VEHICLE_REGISTRY_ID: str = os.getenv("VEHICLE_REGISTRY_ID", "")
     MATCHING_SERVICE_ID: str = os.getenv("MATCHING_SERVICE_ID", "")
     PLATFORM_WALLET: str = os.getenv("PLATFORM_WALLET_ADDRESS", "0x0000000000000000000000000000000000000000000000000000000000000000")
-    
+    REFUND_POOL_ID: str = os.getenv("REFUND_POOL_ID", "")
+
     # Mock 模式設置（默認關閉，使用真實區塊鏈驗證）
     MOCK_MODE: bool = os.getenv("MOCK_MODE", "false").lower() == "true"
     
@@ -44,7 +45,10 @@ class Settings(BaseSettings):
     # 操作錢包私鑰（僅用於支付 gas 費用，不涉及資金轉移）
     # 資金流向：乘客 → 智能合約 → 司機（直接轉帳）
     OPERATOR_PRIVATE_KEY: str = os.getenv("OPERATOR_PRIVATE_KEY", "")
-    
+
+    # Firebase Cloud Messaging 配置
+    FCM_SERVER_KEY: Optional[str] = os.getenv("FCM_SERVER_KEY", None)
+
     class Config:
         env_file = ".env"
         case_sensitive = True

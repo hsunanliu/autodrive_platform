@@ -3,8 +3,11 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import 'http_client_manager.dart';
 
 class GooglePlacesService {
+  // HTTP Client 管理器（單例）
+  static final _httpClient = HttpClientManager();
   // Google Places API Key
   static const String _apiKey = 'AIzaSyB0mx8E7G-8QRwNct2tNraZn4K-CJH7Pcc';
   
@@ -47,14 +50,14 @@ class GooglePlacesService {
         };
       }
 
-      final response = await http.post(
+      final response = await _httpClient.executeRequest((client) => client.post(
         Uri.parse(_autocompleteUrl),
         headers: {
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': _apiKey,
         },
         body: json.encode(body),
-      );
+      ));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -86,14 +89,14 @@ class GooglePlacesService {
   /// 返回：地點詳細信息
   static Future<PlaceDetails?> getPlaceDetails(String placeId) async {
     try {
-      final response = await http.get(
+      final response = await _httpClient.executeRequest((client) => client.get(
         Uri.parse('$_placeDetailsUrl/$placeId'),
         headers: {
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': _apiKey,
           'X-Goog-FieldMask': 'id,displayName,formattedAddress,location,types',
         },
-      );
+      ));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
@@ -133,7 +136,7 @@ class GooglePlacesService {
         'language': 'zh-TW',
       });
 
-      final response = await http.get(uri);
+      final response = await _httpClient.executeRequest((client) => client.get(uri));
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);

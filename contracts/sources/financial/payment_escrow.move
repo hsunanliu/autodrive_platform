@@ -15,6 +15,7 @@ module autodrive::payment_escrow {
     const E_TRIP_ID_MISMATCH: u64 = 2;
     const E_NOT_PASSENGER: u64 = 3;
     const E_INSUFFICIENT_AMOUNT: u64 = 4;
+    const E_NOT_AUTHORIZED: u64 = 5;
     
     /// 託管對象
     public struct Escrow has key, store {
@@ -87,23 +88,29 @@ module autodrive::payment_escrow {
         escrow.status = STATUS_RELEASED;
     }
     
-    /// 退款 - 只有乘客可以調用（取消行程時）
+    /// 退款 - 乘客或司機都可以調用（取消行程時）
+    /// 無論誰取消，錢都會退給乘客
     public entry fun refund_payment(
         escrow: &mut Escrow,
         ctx: &mut TxContext
     ) {
         // 驗證狀態
         assert!(escrow.status == STATUS_LOCKED, E_INVALID_STATUS);
-        // 驗證調用者是乘客
-        assert!(tx_context::sender(ctx) == escrow.passenger, E_NOT_PASSENGER);
-        
+
+        // 驗證調用者是乘客或司機（都可以發起退款）
+        let sender = tx_context::sender(ctx);
+        assert!(
+            sender == escrow.passenger || sender == escrow.driver,
+            E_NOT_AUTHORIZED
+        );
+
         // 取出全部金額
         let refund_amount = coin::value(&escrow.payment);
         let refund_coin = coin::split(&mut escrow.payment, refund_amount, ctx);
-        
-        // 退款給乘客
+
+        // 退款給乘客（無論誰取消）
         transfer::public_transfer(refund_coin, escrow.passenger);
-        
+
         // 更新狀態
         escrow.status = STATUS_REFUNDED;
     }

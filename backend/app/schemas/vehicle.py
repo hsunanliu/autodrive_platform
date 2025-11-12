@@ -14,7 +14,7 @@ class VehicleBase(BaseModel):
     model: str = Field(..., min_length=1, max_length=50, description="車輛型號")
     vehicle_type: str = Field(..., description="車輛類型")
     battery_capacity_kwh: Optional[float] = Field(None, ge=0, description="電池容量(kWh)")
-    hourly_rate: int = Field(..., ge=0, description="每小時費率(micro IOTA)")
+    hourly_rate: int = Field(..., ge=0, description="每小時費率(micro SUI)")
 
 class VehicleCreate(VehicleBase):
     """創建車輛模型"""
@@ -87,7 +87,7 @@ class VehicleResponse(BaseModel):
     hourly_rate: int
     total_trips: int = 0
     total_distance_km: float = 0
-    total_earnings_micro_iota: str = "0"
+    total_earnings_micro_sui: str = "0"
     created_at: datetime
     updated_at: Optional[datetime] = None
     last_active_at: Optional[datetime] = None
@@ -104,7 +104,7 @@ class VehicleResponse(BaseModel):
 class VehicleStatusUpdate(BaseModel):
     """車輛狀態更新模型"""
     status: str = Field(..., description="車輛狀態")
-    
+
     @field_validator('status')
     @classmethod
     def validate_status(cls, v):
@@ -112,3 +112,36 @@ class VehicleStatusUpdate(BaseModel):
         if v not in valid_statuses:
             raise ValueError(f'車輛狀態必須是: {", ".join(valid_statuses)}')
         return v
+
+# === 召回相關模型 ===
+
+class VehicleRecallStart(BaseModel):
+    """開始召回請求"""
+    vehicle_id: str = Field(..., description="車輛ID")
+    target_lat: float = Field(..., ge=-90, le=90, description="目標位置緯度")
+    target_lng: float = Field(..., ge=-180, le=180, description="目標位置經度")
+
+class VehicleRecallCancel(BaseModel):
+    """取消召回請求"""
+    vehicle_id: str = Field(..., description="車輛ID")
+
+class VehicleRecallComplete(BaseModel):
+    """完成召回請求"""
+    vehicle_id: str = Field(..., description="車輛ID")
+    final_lat: float = Field(..., ge=-90, le=90, description="最終位置緯度")
+    final_lng: float = Field(..., ge=-180, le=180, description="最終位置經度")
+
+class VehicleRecallStatus(BaseModel):
+    """召回狀態響應"""
+    vehicle_id: str
+    status: str
+    target_lat: Optional[float] = None
+    target_lng: Optional[float] = None
+    current_lat: Optional[float] = None
+    current_lng: Optional[float] = None
+    distance_remaining_km: Optional[float] = None
+    estimated_time_minutes: Optional[int] = None
+    started_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

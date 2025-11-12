@@ -75,10 +75,26 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
+    final userType = user['user_type']?.toString() ?? 'passenger';
+
+    // 驗證身份是否匹配
+    if (userType == 'both') {
+      // 'both' 類型用戶：遵從 RoleSelectPage 選擇的身份
+      // 不需要驗證，直接使用選擇的身份
+    } else if (userType != widget.role) {
+      // 身份不匹配：例如選擇「乘客」但帳號是「司機」
+      final roleDisplayName = userType == 'driver' ? '司機' : '乘客';
+      setState(() => message = '❌ 身份錯誤！此帳號是「$roleDisplayName」帳號，請返回重新選擇正確的身份。');
+      return;
+    }
+
+    // 確定最終角色
+    final finalRole = userType == 'both' ? widget.role : userType;
+
     final session = UserSession(
       userId: (user['id'] as num).toInt(),
       username: user['username']?.toString() ?? identifier,
-      role: user['user_type']?.toString() ?? widget.role,
+      role: finalRole,
       accessToken: accessToken,
       walletAddress: user['wallet_address']?.toString(),
       phoneNumber: user['phone_number']?.toString(),
@@ -92,8 +108,8 @@ class _LoginPageState extends State<LoginPage> {
 
     setState(() => message = '登入成功');
 
-    final role = session.role;
-    if (role == 'driver') {
+    // 根據最終角色跳轉
+    if (finalRole == 'driver') {
       Navigator.pushReplacementNamed(
         context,
         '/driver',
@@ -111,8 +127,7 @@ class _LoginPageState extends State<LoginPage> {
   void _goToRegisterPage() {
     Navigator.pushNamed(
       context,
-      '/register',
-      arguments: {'role': widget.role},
+      '/register_with_wallet_connect',
     );
   }
 

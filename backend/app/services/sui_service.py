@@ -118,7 +118,7 @@ class SuiService:
             
             return WalletBalance(
                 wallet_address=wallet_address,
-                balance_micro_iota=str(int(balance_micro_sui)),
+                balance_micro_sui=str(int(balance_micro_sui)),
                 balance_iota=balance_sui,
                 last_updated=datetime.utcnow()
             )
@@ -128,11 +128,101 @@ class SuiService:
             # 返回零餘額作為默認值
             return WalletBalance(
                 wallet_address=wallet_address,
-                balance_micro_iota="0",
+                balance_micro_sui="0",
                 balance_iota=0.0,
                 last_updated=datetime.utcnow()
             )
     
+    async def get_escrow_id_from_tx(self, tx_hash: str) -> Optional[str]:
+        """
+        從交易哈希中提取 escrow_object_id
+
+        這個方法查詢區塊鏈交易詳情，從創建的對象中找到 Escrow 對象的 ID。
+        用戶只需提供 tx_hash，後端自動提取 escrow_object_id。
+
+        Args:
+            tx_hash: 支付交易的哈希
+
+        Returns:
+            escrow_object_id 或 None（如果未找到）
+        """
+        try:
+            logger.info(f"🔍 查詢交易以提取 Escrow ID: {tx_hash}")
+
+            # 調用 Sui RPC API 獲取交易詳情
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    self.node_url,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "sui_getTransactionBlock",
+                        "params": [
+                            tx_hash,
+                            {
+                                "showInput": True,
+                                "showEffects": True,
+                                "showObjectChanges": True  # 關鍵：顯示對象變更
+                            }
+                        ]
+                    },
+                    headers={"Content-Type": "application/json"},
+                    timeout=10.0
+                )
+                response.raise_for_status()
+                result = response.json()
+
+            # 檢查 API 錯誤
+            if "error" in result:
+                error_msg = result['error'].get('message', 'Unknown error')
+                logger.error(f"❌ Sui API 錯誤: {error_msg}")
+                return None
+
+            # 檢查交易狀態
+            tx_data = result.get("result", {})
+            effects = tx_data.get("effects", {})
+            status = effects.get("status", {}).get("status")
+
+            if status != "success":
+                logger.error(f"❌ 交易未成功: {status}")
+                return None
+
+            # 查找 Escrow 對象
+            object_changes = tx_data.get("objectChanges", [])
+            logger.info(f"📦 交易中有 {len(object_changes)} 個對象變更")
+
+            for change in object_changes:
+                change_type = change.get("type")
+                object_type = change.get("objectType", "")
+
+                logger.info(f"   檢查對象: 類型={change_type}, 對象類型={object_type[:50]}...")
+
+                # 判斷是否為 Escrow 對象
+                # 條件：1. 新創建的對象 2. 類型包含 payment_escrow::Escrow
+                if (change_type == "created" and
+                    "payment_escrow::Escrow" in object_type):
+
+                    escrow_id = change.get("objectId")
+                    owner = change.get("owner", {})
+
+                    # 驗證是共享對象（Escrow 應該是 Shared）
+                    if "Shared" in owner:
+                        logger.info(f"✅ 找到 Escrow 對象（共享對象）: {escrow_id}")
+                        return escrow_id
+                    else:
+                        logger.warning(f"⚠️ 找到 Escrow 對象但不是共享對象: {escrow_id}, owner={owner}")
+
+            logger.warning(f"⚠️ 交易中未找到 Escrow 對象")
+            logger.info(f"   提示: 請確認這是一筆 payment_escrow::lock_payment 交易")
+            return None
+
+        except httpx.HTTPError as e:
+            logger.error(f"❌ HTTP 請求失敗: {str(e)}")
+            return None
+        except Exception as e:
+            logger.error(f"❌ 提取 Escrow ID 失敗: {str(e)}")
+            return None
+
     async def verify_payment_transaction(
         self,
         tx_hash: str,
@@ -653,10 +743,10 @@ class SuiService:
             transaction_type: 交易類型
             
         Returns:
-            估算的 Gas 費用 (micro IOTA)
+            估算的 Gas 費用 (micro SUI)
         """
         # 簡單的 Gas 費用估算
-        base_fee = 1000  # micro IOTA
+        base_fee = 1000  # micro SUI
         
         if transaction_type == "payment":
             return base_fee * 2  # 支付交易稍微複雜
@@ -706,12 +796,12 @@ class SuiService:
         else:
             balance_key = "default"
         
-        balance_micro_iota = mock_balances[balance_key]
-        balance_iota = int(balance_micro_iota) / 1_000_000
+        balance_micro_sui = mock_balances[balance_key]
+        balance_iota = int(balance_micro_sui) / 1_000_000
         
         return WalletBalance(
             wallet_address=wallet_address,
-            balance_micro_iota=balance_micro_iota,
+            balance_micro_sui=balance_micro_sui,
             balance_iota=balance_iota,
             last_updated=datetime.utcnow()
         )

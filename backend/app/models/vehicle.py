@@ -109,7 +109,7 @@ class Vehicle(Base):
         Integer,
         default=100,
         nullable=False,
-        comment="每小時費率（micro IOTA）"
+        comment="每小時費率（micro SUI）"
     )
     
     # === 統計資料 ===
@@ -127,11 +127,11 @@ class Vehicle(Base):
         comment="總行駛距離（公里）"
     )
     
-    total_earnings_micro_iota = Column(
+    total_earnings_micro_sui = Column(
         String(50),
         default="0",
         nullable=False,
-        comment="總收入（micro IOTA）"
+        comment="總收入（micro SUI）"
     )
     
     # === 時間戳記 ===
@@ -153,7 +153,26 @@ class Vehicle(Base):
         server_default=func.now(),
         comment="最後活躍時間"
     )
-    
+
+    # === 召回功能字段 ===
+    recall_target_lat = Column(
+        Float,
+        nullable=True,
+        comment="召回目標位置緯度"
+    )
+
+    recall_target_lng = Column(
+        Float,
+        nullable=True,
+        comment="召回目標位置經度"
+    )
+
+    recall_started_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="召回開始時間"
+    )
+
     # === 關聯關係 ===
     owner = relationship("User")
     trips_as_vehicle = relationship("Trip")

@@ -6,7 +6,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 class SuiWalletService {
   static const String packageId =
-      '0xda64dff8b8963d5359d64b200ce43d2347d8ce5330c501e597246d46706d542f';
+      '0xa6232c7f85812fe5e57c2e72071915e538ebd2fd7aba98371bd58490e790380b';
   static const String platformAddress =
       '0x6dfff9f4efba3579ce7db6e2f40cfb23461f2aa4e632eb477454bf8c10e0e7b7';
 

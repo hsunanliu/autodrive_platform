@@ -32,9 +32,9 @@ class PaymentTransaction(BaseModel):
     platform_wallet: str = Field(..., description="平台錢包地址")
     
     # 金額信息 (使用字符串避免精度問題)
-    amount_micro_iota: str = Field(..., description="總金額 (micro IOTA)")
-    driver_amount_micro_iota: str = Field(..., description="司機收入 (micro IOTA)")
-    platform_fee_micro_iota: str = Field(..., description="平台費用 (micro IOTA)")
+    amount_micro_sui: str = Field(..., description="總金額 (micro SUI)")
+    driver_amount_micro_sui: str = Field(..., description="司機收入 (micro SUI)")
+    platform_fee_micro_sui: str = Field(..., description="平台費用 (micro SUI)")
     
     # 區塊鏈信息
     blockchain_tx_hash: str = Field(..., description="區塊鏈交易哈希")
@@ -47,7 +47,7 @@ class PaymentTransaction(BaseModel):
     confirmed_at: Optional[datetime] = Field(None, description="交易確認時間")
     
     # 額外信息
-    gas_fee_micro_iota: Optional[str] = Field(None, description="Gas費用 (micro IOTA)")
+    gas_fee_micro_sui: Optional[str] = Field(None, description="Gas費用 (micro SUI)")
     confirmation_count: int = Field(0, description="確認次數")
     
     class Config:
@@ -72,15 +72,15 @@ class PaymentResponse(BaseModel):
     transaction_id: str
     blockchain_tx_hash: str
     status: PaymentStatus
-    amount_micro_iota: str
+    amount_micro_sui: str
     estimated_confirmation_time_seconds: int
-    network_fee_micro_iota: Optional[str] = None
+    network_fee_micro_sui: Optional[str] = None
 
 class WalletBalance(BaseModel):
     """錢包餘額"""
     wallet_address: str
-    balance_micro_iota: str
-    balance_iota: float  # 轉換為 IOTA 單位方便顯示
+    balance_micro_sui: str
+    balance_sui: float  # 轉換為 SUI 單位方便顯示
     last_updated: datetime
     
     @field_validator('wallet_address')
@@ -104,7 +104,7 @@ class PaymentHistory(BaseModel):
     """支付歷史記錄"""
     transaction_id: str
     trip_id: int
-    amount_micro_iota: str
+    amount_micro_sui: str
     status: PaymentStatus
     created_at: datetime
     confirmed_at: Optional[datetime]
@@ -123,9 +123,9 @@ class PaymentHistory(BaseModel):
 
 class PlatformEarnings(BaseModel):
     """平台收益統計"""
-    total_earnings_micro_iota: str
+    total_earnings_micro_sui: str
     total_transactions: int
-    average_fee_micro_iota: str
+    average_fee_micro_sui: str
     period_start: datetime
     period_end: datetime
     
@@ -137,12 +137,12 @@ class RefundRequest(BaseModel):
     """退款請求"""
     transaction_id: str
     reason: str = Field(..., max_length=500, description="退款原因")
-    refund_amount_micro_iota: Optional[str] = Field(None, description="退款金額，None表示全額退款")
+    refund_amount_micro_sui: Optional[str] = Field(None, description="退款金額，None表示全額退款")
     
 class RefundResponse(BaseModel):
     """退款響應"""
     refund_transaction_id: str
     original_transaction_id: str
-    refund_amount_micro_iota: str
+    refund_amount_micro_sui: str
     status: PaymentStatus
     estimated_completion_time: datetime

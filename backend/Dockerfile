@@ -33,5 +33,5 @@ RUN mkdir -p /app/app
 # 暴露端口
 EXPOSE 8000
 
-# 開發模式啟動命令
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# 開發模式啟動命令（使用 socket_app 以支援 WebSocket）
+CMD ["uvicorn", "app.main:socket_app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

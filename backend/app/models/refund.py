@@ -25,6 +25,12 @@ class RefundRequest(Base):
     liability_note = Column(Text, nullable=True)
     recovery_status = Column(String(20), default="pending", nullable=True)  # pending, recovered, waived
 
+    # IPFS 證據欄位
+    evidence_cid = Column(String(100), nullable=True)  # IPFS Content Identifier
+    evidence_hash = Column(String(64), nullable=True)  # SHA256 hash for verification
+    evidence_filename = Column(String(255), nullable=True)  # Original filename
+    evidence_content_type = Column(String(100), nullable=True)  # MIME type
+
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     decided_at = Column(DateTime(timezone=True), nullable=True)
     refunded_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)  # 退款時間

@@ -19,8 +19,8 @@ class _RoleSelectPageState extends State<RoleSelectPage> {
       return;
     }
 
-    // ✅ 傳遞角色給 LoginPage
-    Navigator.pushReplacementNamed(
+    // ✅ 使用 pushNamed 而非 pushReplacementNamed，允許用戶返回
+    Navigator.pushNamed(
       context,
       '/login',
       arguments: {'role': selectedRole},
@@ -29,18 +29,10 @@ class _RoleSelectPageState extends State<RoleSelectPage> {
 
   // 註冊按鈕動作
   void navigateToRegister() {
-    if (selectedRole == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('請先選擇角色')),
-      );
-      return;
-    }
-
-    // ✅ 傳遞角色給 RegisterPage
+    // 使用新的錢包整合註冊頁面（支援 Slush Wallet + 手動輸入）
     Navigator.pushNamed(
       context,
-      '/register',
-      arguments: {'role': selectedRole},
+      '/register_with_wallet_connect',
     );
   }
 
@@ -95,9 +87,9 @@ class _RoleSelectPageState extends State<RoleSelectPage> {
 
             const SizedBox(height: 20),
 
-            // 註冊按鈕
+            // 註冊按鈕（不需要選擇角色，新註冊頁面內建角色選擇）
             OutlinedButton(
-              onPressed: navigateToRegister,
+              onPressed: () => Navigator.pushNamed(context, '/register_with_wallet_connect'),
               child: const Text('註冊'),
               style: OutlinedButton.styleFrom(
                 foregroundColor: Colors.greenAccent,
