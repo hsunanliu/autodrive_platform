@@ -34,11 +34,20 @@ class _AvailableTripsPageState extends State<AvailableTripsPage> {
   void dispose() {
     _refreshTimer?.cancel();
     _ws.off('new_trip_available');
+    _ws.off('joined_drivers_room');
+    // 離開司機在線房間
+    _ws.emit('leave_drivers_room', {});
+    print('📡 司機端：已離開 drivers_online 房間');
     super.dispose();
   }
 
   /// 設置 WebSocket 事件監聽
   void _setupWebSocket() {
+    // 監聽加入房間確認
+    _ws.on('joined_drivers_room', (data) {
+      print('✅ 司機端：成功加入 drivers_online 房間 - $data');
+    });
+
     // 監聽新訂單通知
     _ws.on('new_trip_available', (data) {
       print('📨 司機端收到新訂單通知: $data');
@@ -55,6 +64,10 @@ class _AvailableTripsPageState extends State<AvailableTripsPage> {
         );
       }
     });
+
+    // 加入司機在線房間，接收新訂單通知
+    _ws.emit('join_drivers_room', {});
+    print('📡 司機端：請求加入 drivers_online 房間');
   }
 
   Future<void> _loadAvailableTrips() async {

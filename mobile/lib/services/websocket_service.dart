@@ -20,11 +20,20 @@ class WebSocketService {
   /// 是否已連接
   bool get isConnected => _isConnected;
 
-  /// 初始化並連接 WebSocket
+  /// 初始化並連接 WebSocket（只在未連接時才建立新連接）
   Future<void> connect() async {
-    // 如果已經連接，先斷開
-    if (_socket != null) {
-      disconnect();
+    // ✅ 如果已經有 socket 且正在連接或已連接，直接返回
+    if (_socket != null && (_socket!.connected || _isConnected)) {
+      print('✅ WebSocket: 已連接，無需重複連接');
+      return;
+    }
+
+    // 如果有舊 socket 但未連接，清理它
+    if (_socket != null && !_socket!.connected) {
+      print('🔧 WebSocket: 清理舊的未連接 socket');
+      _socket!.dispose();
+      _socket = null;
+      _isConnected = false;
     }
 
     // 獲取 token
@@ -40,25 +49,30 @@ class WebSocketService {
     final apiUrl = ApiService.getBaseUrl();
 
     print('🔌 WebSocket: 嘗試連接到 $apiUrl');
+    print('🔑 WebSocket: Token 長度 = ${_currentToken?.length ?? 0}');
 
     try {
       _socket = IO.io(
         apiUrl,
         IO.OptionBuilder()
-            .setTransports(['websocket']) // 使用 WebSocket 傳輸
-            .enableAutoConnect()
+            .setTransports(['polling', 'websocket']) // 明確指定傳輸方式
+            .enableAutoConnect()  // 自動連接
             .enableReconnection()
             .setReconnectionAttempts(5)
             .setReconnectionDelay(1000)
-            .setAuth({'token': _currentToken}) // 傳遞 JWT Token
+            .setReconnectionDelayMax(5000)
+            // 同時使用 query 和 auth 參數以確保兼容性
+            .setQuery({'token': _currentToken})
+            .setAuth({'token': _currentToken})
             .build(),
       );
 
       _setupSocketListeners();
 
-      print('✅ WebSocket: 初始化完成');
+      print('✅ WebSocket: 初始化完成（使用 socket_io_client v3，同時發送 query 和 auth）');
     } catch (e) {
-      print('❌ WebSocket: 連接失敗 - $e');
+      print('❌ WebSocket: 初始化失敗 - $e');
+      print('❌ 錯誤堆疊: ${StackTrace.current}');
     }
   }
 
@@ -76,6 +90,8 @@ class WebSocketService {
     // 連接失敗
     _socket!.onConnectError((error) {
       print('❌ WebSocket: 連接錯誤 - $error');
+      print('❌ 錯誤類型: ${error.runtimeType}');
+      print('❌ 錯誤詳情: ${error.toString()}');
       _isConnected = false;
       _notifyListeners('connection_status', {'connected': false, 'error': error});
     });
@@ -92,9 +108,15 @@ class WebSocketService {
       print('🔄 WebSocket: 重連中 (第 $attempt 次)');
     });
 
-    // 連接成功響應
+    // 連接成功響應（後端自定義事件）
     _socket!.on('connected', (data) {
       print('📡 WebSocket: 收到連接確認 - $data');
+      // 後端認證成功後會發送此事件，此時設置連接狀態
+      if (!_isConnected) {
+        _isConnected = true;
+        print('✅ WebSocket: 已連接（通過 connected 事件確認）');
+        _notifyListeners('connection_status', {'connected': true});
+      }
     });
 
     // 錯誤事件
@@ -169,22 +191,40 @@ class WebSocketService {
       _notifyListeners('new_trip_available', data);
     });
 
-    // 加入房間確認
+    // 加入行程房間確認
     _socket!.on('joined_trip', (data) {
       print('📨 WebSocket: 已加入行程房間 - $data');
       _notifyListeners('joined_trip', data);
     });
 
-    // 離開房間確認
+    // 離開行程房間確認
     _socket!.on('left_trip', (data) {
       print('📨 WebSocket: 已離開行程房間 - $data');
       _notifyListeners('left_trip', data);
+    });
+
+    // 加入司機房間確認
+    _socket!.on('joined_drivers_room', (data) {
+      print('📨 WebSocket: 已加入司機在線房間 - $data');
+      _notifyListeners('joined_drivers_room', data);
     });
 
     // 新訊息（未來功能）
     _socket!.on('new_message', (data) {
       print('📨 WebSocket: 收到 new_message - $data');
       _notifyListeners('new_message', data);
+    });
+
+    // 車輛位置更新（召回功能）
+    _socket!.on('vehicle_location_update', (data) {
+      print('📍 WebSocket: 收到 vehicle_location_update - $data');
+      _notifyListeners('vehicle_location_update', data);
+    });
+
+    // 車輛召回完成
+    _socket!.on('vehicle_recall_completed', (data) {
+      print('🎯 WebSocket: 收到 vehicle_recall_completed - $data');
+      _notifyListeners('vehicle_recall_completed', data);
     });
   }
 
@@ -226,13 +266,41 @@ class WebSocketService {
 
   /// 加入行程房間
   void joinTrip(int tripId) {
-    if (_socket == null || !_isConnected) {
-      print('❌ WebSocket: 無法加入房間，未連接');
+    print('🔍 [DEBUG] joinTrip called with trip_id: $tripId');
+    print('🔍 [DEBUG] _socket == null: ${_socket == null}');
+    print('🔍 [DEBUG] _isConnected: $_isConnected');
+
+    if (_socket == null) {
+      print('❌ WebSocket: 無法加入房間，socket 為 null');
       return;
     }
 
-    _socket!.emit('join_trip', {'trip_id': tripId});
-    print('📤 WebSocket: 發送 join_trip - trip_id: $tripId');
+    if (!_isConnected) {
+      print('❌ WebSocket: 無法加入房間，_isConnected = false');
+      return;
+    }
+
+    // 檢查 socket 的實際連接狀態
+    print('🔍 [DEBUG] socket.connected: ${_socket!.connected}');
+    print('🔍 [DEBUG] socket.disconnected: ${_socket!.disconnected}');
+
+    if (!_socket!.connected) {
+      print('❌ WebSocket: socket.connected 為 false，無法發送事件');
+      return;
+    }
+
+    // 嘗試發送事件
+    print('📤 WebSocket: 準備發送 join_trip - trip_id: $tripId');
+    try {
+      _socket!.emit('join_trip', {'trip_id': tripId});
+      print('✅ WebSocket: join_trip 事件已發送');
+
+      // 同時發送一個 ping 測試連接是否真的通暢
+      _socket!.emit('ping', {'test': true, 'timestamp': DateTime.now().millisecondsSinceEpoch});
+      print('📤 WebSocket: 測試 ping 已發送');
+    } catch (e) {
+      print('❌ WebSocket: 發送 join_trip 失敗 - $e');
+    }
   }
 
   /// 離開行程房間

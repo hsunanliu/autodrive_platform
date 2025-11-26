@@ -1,0 +1,18 @@
+/// 本地開發配置示例
+///
+/// 複製這個文件為 app_config.local.dart 並修改你的 IP 地址
+///
+/// 步驟：
+/// 1. 複製文件：cp app_config.local.dart.example app_config.local.dart
+/// 2. 查看 Mac IP：在終端執行 ifconfig | grep "inet "
+/// 3. 修改下面的 IP 地址為你的 Mac IP
+/// 4. 重新運行 Flutter app
+
+// 將下面的 IP 改為你的 Mac 實際 IP
+String get localBackendUrl => 'http://192.168.x.x:8000/api/v1';
+
+// 常見 IP 範圍：
+// - 192.168.0.x
+// - 192.168.1.x
+// - 192.168.50.x
+// - 10.0.0.x

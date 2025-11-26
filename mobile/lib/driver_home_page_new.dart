@@ -47,15 +47,12 @@ class _DriverHomePageNewState extends State<DriverHomePageNew> with SingleTicker
     // ✅ 已移除輪詢 - 改用 WebSocket 實時通知
   }
 
-  /// 初始化 WebSocket 連接並設置監聽
+  /// 設置 WebSocket 監聽（不重複建立連接）
   Future<void> _initializeWebSocket() async {
     final ws = WebSocketService();
 
-    // ✅ 確保 WebSocket 已連接
-    if (!ws.isConnected) {
-      print('🔌 司機端初始化 WebSocket 連接...');
-      await ws.connect();
-    }
+    // ✅ 不再主動 connect()，由統一入口管理連接
+    // WebSocket 應該在登入成功時或 app 啟動時統一初始化
 
     // 加入司機在線房間以接收新訂單通知
     ws.emit('join_drivers_room', {});

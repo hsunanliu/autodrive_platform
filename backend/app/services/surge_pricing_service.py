@@ -218,6 +218,7 @@ class SurgePricingService:
     ) -> int:
         """計算附近待接訂單數"""
         from app.models.ride import Trip
+        from app.core.database import async_session_maker
 
         # 簡單的矩形範圍查詢
         # 1 度緯度 ≈ 111 公里
@@ -232,9 +233,11 @@ class SurgePricingService:
             )
         )
 
-        result = await self.db.execute(stmt)
-        count = result.scalar() or 0
-        return count
+        # 使用獨立的數據庫會話避免 greenlet 錯誤
+        async with async_session_maker() as session:
+            result = await session.execute(stmt)
+            count = result.scalar() or 0
+            return count
 
     async def _count_available_drivers_nearby(
         self,
@@ -245,6 +248,7 @@ class SurgePricingService:
         """計算附近可用司機數"""
         from app.models.vehicle import Vehicle
         from app.models.user import User
+        from app.core.database import async_session_maker
 
         lat_range = radius_km / 111.0
         lng_range = radius_km / (111.0 * abs(lat / 90.0))
@@ -260,9 +264,11 @@ class SurgePricingService:
             )
         )
 
-        result = await self.db.execute(stmt)
-        count = result.scalar() or 0
-        return count
+        # 使用獨立的數據庫會話避免 greenlet 錯誤
+        async with async_session_maker() as session:
+            result = await session.execute(stmt)
+            count = result.scalar() or 0
+            return count
 
     def _generate_surge_reason(
         self,

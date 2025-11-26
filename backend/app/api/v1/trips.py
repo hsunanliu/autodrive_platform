@@ -186,7 +186,7 @@ async def accept_trip(
                 driver_info = {
                     "id": current_user.id,
                     "username": current_user.username,
-                    "phone": current_user.phone,
+                    "phone": current_user.phone_number,
                     "estimated_arrival": accept_data.estimated_arrival_minutes
                 }
                 await notifier.notify_trip_accepted(trip_id, trip.passenger_id, driver_info)
@@ -366,8 +366,12 @@ async def get_available_trips(
                 status=trip.status,
                 pickup_address=trip.pickup_address,
                 dropoff_address=trip.dropoff_address,
+                pickup_lat=trip.pickup_lat,
+                pickup_lng=trip.pickup_lng,
+                dropoff_lat=trip.dropoff_lat,
+                dropoff_lng=trip.dropoff_lng,
                 distance_km=trip.distance_km,
-                total_amount=int(trip.total_amount) if trip.total_amount else None,  # 已經是 micro SUI，不需再乘
+                total_amount=trip.total_amount,  # 直接使用 SUI float 值
                 passenger_count=trip.passenger_count,
                 requested_at=trip.requested_at,
                 completed_at=trip.completed_at,
@@ -505,11 +509,17 @@ async def get_trip_route(
             waypoints=waypoints
         )
 
+        # 計算總距離和時間（使用行程已有數據）
+        distance_meters = trip.distance_km * 1000 if trip.distance_km else 0
+        duration_seconds = trip.estimated_duration_minutes * 60 if trip.estimated_duration_minutes else 0
+
         # 返回路線點
         return {
             "success": True,
             "trip_id": trip_id,
             "route_points": [{"lat": p.lat, "lng": p.lng} for p in route_points],
+            "distance_meters": distance_meters,
+            "duration_seconds": duration_seconds,
             "waypoints": [
                 {
                     "sequence": wp.sequence,

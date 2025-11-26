@@ -14,12 +14,13 @@ from app.models.ride import Trip
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.schemas.trip import (
-    TripCreate, TripResponse, TripStatus, TripFareBreakdown, 
+    TripCreate, TripResponse, TripStatus, TripFareBreakdown,
     TripEstimate, DriverTripInfo, TripSummary
 )
 from app.services.location_service import LocationService
 from app.services.escrow_service import EscrowService  # 新的託管服務
 from app.services.surge_pricing_service import SurgePricingService
+from app.services.price_oracle import get_price_oracle  # 價格預言機
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +32,13 @@ class TripService:
         self.escrow_service = EscrowService()
         self.surge_pricing_service = SurgePricingService(db)
 
-        # 費率配置 (MIST，1 SUI = 1,000,000,000 MIST)
-        # 參考價格（以 1 SUI ≈ $2.5 USD 計算）：
-        # - 起跳價：0.6 SUI ≈ $1.5
-        # - 每公里：0.2 SUI ≈ $0.5
-        # - 每分鐘：0.04 SUI ≈ $0.1
-        self.BASE_FARE = 600000000  # 起跳價 (0.6 SUI)
-        self.PER_KM_RATE = 200000000  # 每公里費率 (0.2 SUI)
-        self.PER_MINUTE_RATE = 40000000  # 每分鐘費率 (0.04 SUI)
-        self.PLATFORM_FEE_RATE = 0.05  # 平台費率 5%
+        # ✅ 費率配置（以美元錨定，穩定不受 SUI 價格波動影響）
+        self.BASE_FARE_USD = 1.50  # 起跳價 $1.5 USD
+        self.PER_KM_RATE_USD = 0.50  # 每公里 $0.5 USD
+        self.PER_MINUTE_RATE_USD = 0.10  # 每分鐘 $0.1 USD
+
+        # ✅ 無手續費模式（改為透過代幣經濟盈利）
+        self.PLATFORM_FEE_RATE = 0.0  # 平台費率 0%（無手續費）
 
         # 配對參數
         self.MAX_PICKUP_DISTANCE_KM = 10.0
@@ -109,7 +108,7 @@ class TripService:
         surge_multiplier = surge_info['surge_multiplier'] if use_dynamic_pricing else 1.0
 
         # 計算費用（帶完整的動態定價資訊）
-        fare_breakdown = self._calculate_fare(
+        fare_breakdown = await self._calculate_fare(
             distance_km,
             estimated_duration,
             surge_multiplier=surge_multiplier,
@@ -169,13 +168,20 @@ class TripService:
             logger.info(f"✅ 已創建 {len(trip_data.waypoints)} 個中繼點")
 
             # 重新載入 trip 以包含 waypoints 關聯
-            from sqlalchemy import select
             from sqlalchemy.orm import selectinload
+            from app.core.database import async_session_maker
+
             stmt = select(Trip).where(Trip.trip_id == trip.trip_id).options(selectinload(Trip.waypoints))
-            result = await self.db.execute(stmt)
-            trip = result.scalar_one()
+
+            # 使用新的 session 重新查詢（避免 greenlet 錯誤）
+            async with async_session_maker() as refresh_session:
+                result = await refresh_session.execute(stmt)
+                trip = result.scalar_one()
 
         logger.info(f"✅ 行程創建成功 (後端): {trip.trip_id}")
+
+        # 保存 trip_id 用於後續查詢
+        trip_id = trip.trip_id
 
         # ✅ 新增：智能推送給附近司機（不阻塞）
         try:
@@ -183,7 +189,16 @@ class TripService:
         except Exception as e:
             logger.warning(f"推送通知失敗: {e}")
 
-        return await self._build_trip_response(trip, fare_breakdown)
+        # 使用新 session 重新查詢 trip（避免 detached 對象問題）
+        from sqlalchemy.orm import selectinload
+        from app.core.database import async_session_maker
+
+        async with async_session_maker() as response_session:
+            stmt = select(Trip).where(Trip.trip_id == trip_id).options(selectinload(Trip.waypoints))
+            result = await response_session.execute(stmt)
+            fresh_trip = result.scalar_one()
+
+            return await self._build_trip_response(fresh_trip, fare_breakdown)
     
     # ========================================================================
     # 配對邏輯 - 完全在後端
@@ -452,7 +467,7 @@ class TripService:
             actual_duration = trip.estimated_duration_minutes
         
         # 重新計算最終費用
-        fare_breakdown = self._calculate_fare(trip.distance_km, actual_duration)
+        fare_breakdown = await self._calculate_fare(trip.distance_km, actual_duration)
         
         # 檢查是否有託管記錄
         if not trip.escrow_object_id:
@@ -585,7 +600,7 @@ class TripService:
                             amount_mist = int(float(trip.total_amount) * 1_000_000_000)
                         else:
                             # 如果沒有總金額，使用估價
-                            fare_breakdown = self._calculate_fare(
+                            fare_breakdown = await self._calculate_fare(
                                 trip.distance_km,
                                 trip.estimated_duration_minutes
                             )
@@ -690,7 +705,7 @@ class TripService:
         )
 
         # 計算標準價格（無加價）
-        standard_fare = self._calculate_fare(
+        standard_fare = await self._calculate_fare(
             distance_km,
             duration_minutes,
             surge_multiplier=1.0,
@@ -699,7 +714,7 @@ class TripService:
         )
 
         # 計算動態價格（含加價）
-        dynamic_fare = self._calculate_fare(
+        dynamic_fare = await self._calculate_fare(
             distance_km,
             duration_minutes,
             surge_multiplier=surge_info['surge_multiplier'],
@@ -749,7 +764,7 @@ class TripService:
     # 私有輔助方法
     # ========================================================================
     
-    def _calculate_fare(
+    async def _calculate_fare(
         self,
         distance_km: float,
         duration_minutes: int,
@@ -758,7 +773,12 @@ class TripService:
         surge_reason: Optional[str] = None
     ) -> TripFareBreakdown:
         """
-        計算費用
+        計算費用（美元錨定 + 動態 SUI 換算）
+
+        流程：
+        1. 以美元計算費用
+        2. 獲取 SUI/USD 匯率
+        3. 換算成 SUI（MIST）數量
 
         Args:
             distance_km: 行程距離（公里）
@@ -768,29 +788,50 @@ class TripService:
             surge_reason: 加價原因說明
 
         Returns:
-            包含完整費用分解的 TripFareBreakdown
+            包含完整費用分解的 TripFareBreakdown（同時包含 USD 和 SUI 金額）
         """
-        base_fare = self.BASE_FARE
-        distance_fare = int(distance_km * self.PER_KM_RATE)
-        time_fare = int(duration_minutes * self.PER_MINUTE_RATE)
+        # 1. 以美元計算費用
+        base_fare_usd = self.BASE_FARE_USD
+        distance_fare_usd = distance_km * self.PER_KM_RATE_USD
+        time_fare_usd = duration_minutes * self.PER_MINUTE_RATE_USD
 
         # 應用動態加價係數
-        subtotal = int((base_fare + distance_fare + time_fare) * surge_multiplier)
-        platform_fee = int(subtotal * self.PLATFORM_FEE_RATE)
-        total_amount = subtotal + platform_fee
-        driver_amount = total_amount - platform_fee
+        subtotal_usd = (base_fare_usd + distance_fare_usd + time_fare_usd) * surge_multiplier
+        platform_fee_usd = subtotal_usd * self.PLATFORM_FEE_RATE  # 0% = $0
+        total_usd = subtotal_usd + platform_fee_usd
+        driver_amount_usd = total_usd - platform_fee_usd
+
+        # 2. 獲取 SUI/USD 匯率
+        oracle = get_price_oracle()
+        sui_price_usd = await oracle.get_sui_usd_price()
+
+        # 3. 換算成 SUI（MIST）
+        # 1 SUI = 1,000,000,000 MIST
+        base_fare_mist = int((base_fare_usd / sui_price_usd) * 1_000_000_000)
+        distance_fare_mist = int((distance_fare_usd / sui_price_usd) * 1_000_000_000)
+        time_fare_mist = int((time_fare_usd / sui_price_usd) * 1_000_000_000)
+        platform_fee_mist = int((platform_fee_usd / sui_price_usd) * 1_000_000_000)
+        total_amount_mist = int((total_usd / sui_price_usd) * 1_000_000_000)
+        driver_amount_mist = int((driver_amount_usd / sui_price_usd) * 1_000_000_000)
+
+        logger.info(
+            f"💰 費用計算: ${total_usd:.2f} USD = {total_amount_mist / 1e9:.4f} SUI "
+            f"(匯率: 1 SUI = ${sui_price_usd:.2f})"
+        )
 
         return TripFareBreakdown(
-            base_fare=base_fare,
-            distance_fare=distance_fare,
-            time_fare=time_fare,
-            platform_fee=platform_fee,
-            total_amount=total_amount,
-            driver_amount=driver_amount,
+            # SUI 金額（MIST 單位）
+            base_fare=base_fare_mist,
+            distance_fare=distance_fare_mist,
+            time_fare=time_fare_mist,
+            platform_fee=platform_fee_mist,
+            total_amount=total_amount_mist,
+            driver_amount=driver_amount_mist,
+            # 基本信息
             distance_km=distance_km,
             duration_minutes=duration_minutes,
-            per_km_rate=self.PER_KM_RATE,
-            per_minute_rate=self.PER_MINUTE_RATE,
+            per_km_rate=int((self.PER_KM_RATE_USD / sui_price_usd) * 1_000_000_000),
+            per_minute_rate=int((self.PER_MINUTE_RATE_USD / sui_price_usd) * 1_000_000_000),
             platform_fee_rate=self.PLATFORM_FEE_RATE,
             surge_multiplier=surge_multiplier,
             surge_breakdown=surge_breakdown,
@@ -847,6 +888,8 @@ class TripService:
     
     async def _find_available_drivers(self, lat: float, lng: float, radius_km: float) -> List[Dict[str, Any]]:
         """查找附近可用司機"""
+        from app.core.database import async_session_maker
+
         stmt = select(Vehicle, User).join(User, Vehicle.owner_id == User.id).where(
             and_(
                 Vehicle.status == "available",
@@ -855,8 +898,11 @@ class TripService:
                 User.user_type.in_(["driver", "both"])
             )
         )
-        result = await self.db.execute(stmt)
-        vehicles_and_drivers = result.all()
+
+        # 使用獨立的數據庫會話避免 greenlet 錯誤
+        async with async_session_maker() as session:
+            result = await session.execute(stmt)
+            vehicles_and_drivers = result.all()
         
         matches = []
         for vehicle, driver in vehicles_and_drivers:
@@ -891,7 +937,7 @@ class TripService:
     async def _build_trip_response(self, trip: Trip, fare_breakdown: Optional[TripFareBreakdown] = None) -> TripResponse:
         """構建行程響應對象"""
         if not fare_breakdown and trip.distance_km and trip.estimated_duration_minutes:
-            fare_breakdown = self._calculate_fare(trip.distance_km, trip.estimated_duration_minutes)
+            fare_breakdown = await self._calculate_fare(trip.distance_km, trip.estimated_duration_minutes)
 
         # 獲取中繼點數據（如果有）
         from app.schemas.trip import WaypointResponse

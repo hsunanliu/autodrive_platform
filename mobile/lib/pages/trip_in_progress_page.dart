@@ -48,7 +48,7 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
   void initState() {
     super.initState();
     _loadTripData();
-    _setupWebSocket();
+    _setupWebSocket(); // WebSocket 設置中會處理加入房間
 
     // 如果有正在進行的模擬，在載入完成後嘗試恢復
     if (_simulationService.isSimulatingTrip(widget.tripId)) {
@@ -66,7 +66,11 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
     _pollTimer = null;
 
     // 清理 WebSocket 監聽器
+    _ws.off('joined_trip');
+    _ws.off('connection_status');
+    _ws.off('trip_started');
     _ws.off('payment_completed');
+    _ws.off('trip_completed');
     _ws.off('trip_cancelled');
 
     // 釋放 MapController
@@ -78,6 +82,74 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
 
   /// 設置 WebSocket 監聽支付完成事件
   void _setupWebSocket() {
+    bool _hasJoinedRoom = false; // 標記是否已成功加入房間
+
+    // 監聽加入房間確認
+    _ws.on('joined_trip', (data) {
+      print('✅ 成功加入行程房間: $data');
+      _hasJoinedRoom = true;
+    });
+
+    // 定義加入房間的方法（帶重試機制）
+    void attemptJoinRoom({int attempt = 0}) {
+      if (_hasJoinedRoom || attempt > 10) {
+        if (attempt > 10) {
+          print('❌ 嘗試加入房間失敗，已重試10次');
+        }
+        return;
+      }
+
+      Future.delayed(Duration(milliseconds: 500 * (attempt + 1)), () {
+        if (!mounted || _hasJoinedRoom) return;
+
+        print('🔄 嘗試加入行程房間 (第${attempt + 1}次): trip_id=${widget.tripId}, isConnected=${_ws.isConnected}');
+        if (_ws.isConnected) {
+          _ws.joinTrip(widget.tripId);
+          print('📤 已發送 join_trip 請求');
+
+          // 1秒後檢查是否成功，沒成功就重試
+          Future.delayed(const Duration(seconds: 1), () {
+            if (!_hasJoinedRoom && mounted) {
+              attemptJoinRoom(attempt: attempt + 1);
+            }
+          });
+        } else {
+          // WebSocket 未連接，繼續重試
+          attemptJoinRoom(attempt: attempt + 1);
+        }
+      });
+    }
+
+    // 監聽連接狀態 - 連接成功後嘗試加入房間
+    _ws.on('connection_status', (data) {
+      print('📡 收到連接狀態變化: $data');
+      if (data['connected'] == true && !_hasJoinedRoom) {
+        print('📡 WebSocket 已連接，嘗試加入行程 ${widget.tripId} 的房間');
+        attemptJoinRoom();
+      }
+    });
+
+    // 立即開始嘗試加入房間
+    print('🚀 開始嘗試加入 WebSocket 房間: trip_id=${widget.tripId}');
+    attemptJoinRoom();
+
+    // 監聽行程開始（乘客上車）
+    _ws.on('trip_started', (data) {
+      print('📨 收到行程開始通知: $data');
+      if (mounted) {
+        // 啟動模擬行程
+        _startSimulation();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('🚗 乘客已上車，行程開始！'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    });
+
     // 監聽支付完成 - 只更新支付狀態，不影響模擬
     _ws.on('payment_completed', (data) {
       print('📨 收到支付完成通知: $data');
@@ -88,6 +160,26 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('✅ 乘客已完成支付'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+      }
+    });
+
+    // 監聽行程完成
+    _ws.on('trip_completed', (data) {
+      print('📨 收到行程完成通知: $data');
+      if (mounted) {
+        setState(() {
+          _status = 'completed';
+        });
+        // 停止模擬
+        _simulationService.stopSimulation();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ 行程已完成！'),
             backgroundColor: Colors.green,
             duration: Duration(seconds: 2),
           ),
@@ -151,6 +243,13 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
       } else {
         print('♻️ 更新行程狀態，跳過路線重載');
       }
+
+      // 如果行程已經是 picked_up 或 in_progress 狀態，但模擬還沒開始，自動啟動模擬
+      if ((newStatus == 'picked_up' || newStatus == 'in_progress') &&
+          !_simulationService.isRunning) {
+        print('🚗 檢測到行程已開始（狀態: $newStatus），自動啟動模擬...');
+        _startSimulation();
+      }
     } else {
       print('❌ 獲取行程失敗: ${result['error']}');
       setState(() => _isLoading = false);
@@ -198,8 +297,11 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
 
       if (!mounted) return;
 
-      if (result['success'] == true && result['route_points'] != null) {
-        final routePointsData = result['route_points'] as List;
+      // 提取實際數據（被 _wrapResponse 包裝過）
+      final data = result['data'] as Map<String, dynamic>?;
+
+      if (result['success'] == true && data != null && data['route_points'] != null) {
+        final routePointsData = data['route_points'] as List;
         final routePoints = routePointsData
             .map((p) => LatLng(p['lat'] as double, p['lng'] as double))
             .toList();
@@ -207,14 +309,14 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
         print('✅ 路線獲取成功: ${routePoints.length} 個路線點');
 
         // 獲取停靠點資訊（如果有）
-        final waypointsData = result['waypoints'] as List?;
+        final waypointsData = data['waypoints'] as List?;
         if (waypointsData != null && waypointsData.isNotEmpty) {
           print('📍 包含 ${waypointsData.length} 個停靠點');
         }
 
         // 創建 DirectionsResult 對象（保持與現有模擬服務的兼容性）
-        final distanceMeters = (result['distance_meters'] ?? 0).toDouble();
-        final durationSeconds = (result['duration_seconds'] ?? 0).toInt();
+        final distanceMeters = (data['distance_meters'] ?? 0).toDouble();
+        final durationSeconds = (data['duration_seconds'] ?? 0).toInt();
 
         // 格式化距離和時間文字
         final distanceKm = distanceMeters / 1000;
@@ -276,7 +378,7 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
     final durationSeconds = _directions!.durationSeconds;
 
     // 🚀 加速模擬：設定速度倍數（例如 10 倍速）
-    const speedMultiplier = 10.0; // 調整這個數字來改變速度
+    const speedMultiplier = 3.0; // 3倍速
     final intervalMs = (durationSeconds * 1000 / totalPoints / speedMultiplier).round();
 
     // 檢查是否已有此行程的模擬在運行
@@ -930,9 +1032,11 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
 
     switch (_status) {
       case 'accepted':
-        buttonText = '已接到乘客，開始行程';
-        onPressed = () => _updateTripStatus('picked_up');
-        buttonColor = Colors.blue;
+        // 司機接單後自動開始行程，不需要手動確認
+        // 乘客會自己操作上車
+        buttonText = '等待乘客上車...';
+        onPressed = null;
+        buttonColor = Colors.grey;
         break;
       case 'picked_up':
         if (hasEscrow) {

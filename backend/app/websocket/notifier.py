@@ -225,3 +225,82 @@ class WebSocketNotifier:
         if sid:
             await self.manager.leave_room(sid, "drivers_online")
             logger.info(f"司機 {driver_id} 離開在線司機房間")
+
+    async def notify_vehicle_location_update(
+        self,
+        vehicle_id: str,
+        lat: float,
+        lng: float,
+        driver_id: Optional[int] = None
+    ):
+        """
+        通知車輛位置更新（用於召回）
+
+        Args:
+            vehicle_id: 車輛 ID
+            lat: 緯度
+            lng: 經度
+            driver_id: 司機 ID（可選）
+        """
+        # 如果有driver_id，發送給該司機
+        if driver_id:
+            await self.manager.emit_to_user(
+                driver_id,
+                "vehicle_location_update",
+                {
+                    "vehicle_id": vehicle_id,
+                    "lat": lat,
+                    "lng": lng
+                }
+            )
+            logger.debug(f"已通知司機 {driver_id} 車輛 {vehicle_id} 位置更新")
+
+        # 也廣播給所有在線司機（用於地圖顯示）
+        await self.manager.emit_to_room(
+            "drivers_online",
+            "vehicle_location_update",
+            {
+                "vehicle_id": vehicle_id,
+                "lat": lat,
+                "lng": lng
+            }
+        )
+
+    async def notify_vehicle_recall_completed(
+        self,
+        vehicle_id: str,
+        final_lat: float,
+        final_lng: float,
+        driver_id: Optional[int] = None
+    ):
+        """
+        通知車輛召回完成
+
+        Args:
+            vehicle_id: 車輛 ID
+            final_lat: 最終緯度
+            final_lng: 最終經度
+            driver_id: 司機 ID（可選）
+        """
+        data = {
+            "vehicle_id": vehicle_id,
+            "lat": final_lat,
+            "lng": final_lng,
+            "message": "車輛已到達目標位置"
+        }
+
+        # 通知司機
+        if driver_id:
+            await self.manager.emit_to_user(
+                driver_id,
+                "vehicle_recall_completed",
+                data
+            )
+
+        # 也廣播給所有在線司機
+        await self.manager.emit_to_room(
+            "drivers_online",
+            "vehicle_recall_completed",
+            data
+        )
+        logger.info(f"已通知車輛 {vehicle_id} 召回完成")

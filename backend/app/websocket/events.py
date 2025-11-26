@@ -23,34 +23,69 @@ def register_socketio_events(sio: socketio.AsyncServer, manager: ConnectionManag
     """
 
     @sio.event
-    async def connect(sid: str, environ: Dict, auth: Dict):
+    async def connect(sid: str, environ: Dict, auth: Dict = None):
         """
         處理客戶端連接事件
 
         Args:
             sid: Socket ID
             environ: 環境變數
-            auth: 認證資料，應包含 token
+            auth: 認證資料（可選）
         """
-        logger.info(f"客戶端嘗試連接: {sid}")
+        try:
+            logger.info(f"🔌 客戶端嘗試連接: {sid}")
+            logger.info(f"🔍 auth 參數: {auth}")
+            logger.info(f"🔍 environ keys: {list(environ.keys())[:10]}")  # 只顯示前10個key
 
-        # 驗證 JWT Token
-        token = auth.get("token") if auth else None
-        if not token:
-            logger.error(f"連接 {sid} 缺少 token")
-            raise ConnectionRefusedError("缺少認證 token")
+            # 嘗試從多個來源獲取 token
+            token = None
 
-        user_id = manager.verify_token(token)
-        if not user_id:
-            logger.error(f"連接 {sid} 的 token 無效")
-            raise ConnectionRefusedError("無效的認證 token")
+            # 1. 從 auth 參數獲取（Socket.IO 標準方式）
+            if auth and isinstance(auth, dict) and auth.get("token"):
+                token = auth.get("token")
+                logger.info(f"✅ 從 auth 參數獲取 token (長度: {len(token)})")
 
-        # 註冊連接
-        await manager.connect_user(sid, user_id)
+            # 2. 從查詢參數獲取
+            if not token:
+                query_string = environ.get('QUERY_STRING', '')
+                logger.info(f"🔍 查詢字串: {query_string[:100]}")  # 只顯示前100字符
+                from urllib.parse import parse_qs
+                query_params = parse_qs(query_string)
+                if 'token' in query_params:
+                    token = query_params['token'][0]
+                    logger.info(f"✅ 從查詢參數獲取 token (長度: {len(token)})")
 
-        # 發送連接成功訊息
-        await sio.emit("connected", {"user_id": user_id, "message": "連接成功"}, room=sid)
-        logger.info(f"用戶 {user_id} 連接成功，Socket ID: {sid}")
+            # 3. 從 HTTP headers 獲取
+            if not token:
+                headers = environ.get('HTTP_AUTHORIZATION', '')
+                if headers.startswith('Bearer '):
+                    token = headers[7:]
+                    logger.info(f"✅ 從 Authorization header 獲取 token")
+
+            if not token:
+                logger.error(f"❌ 連接 {sid} 缺少 token")
+                logger.error(f"❌ auth={auth}, query_string={environ.get('QUERY_STRING', '')[:100]}")
+                raise ConnectionRefusedError("缺少認證 token")
+
+            user_id = manager.verify_token(token)
+            if not user_id:
+                logger.error(f"❌ 連接 {sid} 的 token 無效")
+                raise ConnectionRefusedError("無效的認證 token")
+
+            # 註冊連接
+            await manager.connect_user(sid, user_id)
+
+            # 發送連接成功訊息
+            await sio.emit("connected", {"user_id": user_id, "message": "連接成功"}, room=sid)
+            logger.info(f"✅ 用戶 {user_id} 連接成功，Socket ID: {sid}")
+
+        except ConnectionRefusedError as e:
+            logger.error(f"❌ 拒絕連接 {sid}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"❌ 連接處理異常 {sid}: {e}")
+            logger.exception("詳細錯誤:")
+            raise ConnectionRefusedError(f"連接處理失敗: {str(e)}")
 
     @sio.event
     async def disconnect(sid: str):
@@ -73,7 +108,9 @@ def register_socketio_events(sio: socketio.AsyncServer, manager: ConnectionManag
             sid: Socket ID
             data: 包含 trip_id 的資料
         """
+        logger.info(f"🔍 [DEBUG] join_trip 被調用！sid={sid}, data={data}")
         user_id = manager.get_user_id(sid)
+        logger.info(f"🔍 [DEBUG] user_id={user_id}")
         trip_id = data.get("trip_id")
 
         if not trip_id:
@@ -82,7 +119,9 @@ def register_socketio_events(sio: socketio.AsyncServer, manager: ConnectionManag
             return
 
         room_name = f"trip_{trip_id}"
+        logger.info(f"🔍 [DEBUG] 準備加入房間: {room_name}")
         success = await manager.join_room(sid, room_name)
+        logger.info(f"🔍 [DEBUG] 加入房間結果: {success}")
 
         if success:
             await sio.emit(
@@ -90,9 +129,10 @@ def register_socketio_events(sio: socketio.AsyncServer, manager: ConnectionManag
                 {"trip_id": trip_id, "message": f"成功加入行程 {trip_id}"},
                 room=sid
             )
-            logger.info(f"用戶 {user_id} 加入行程房間 {room_name}")
+            logger.info(f"✅ 用戶 {user_id} 成功加入行程房間 {room_name}")
         else:
             await sio.emit("error", {"message": "加入房間失敗"}, room=sid)
+            logger.error(f"❌ 用戶 {user_id} 加入房間 {room_name} 失敗")
 
     @sio.event
     async def leave_trip(sid: str, data: Dict[str, Any]):
@@ -273,6 +313,9 @@ def register_socketio_events(sio: socketio.AsyncServer, manager: ConnectionManag
             sid: Socket ID
             data: 可選資料
         """
+        user_id = manager.get_user_id(sid)
+        logger.info(f"💓 [DEBUG] ping 收到！sid={sid}, user_id={user_id}, data={data}")
         await sio.emit("pong", {"timestamp": data.get("timestamp") if data else None}, room=sid)
+        logger.info(f"💓 [DEBUG] pong 已發送")
 
     logger.info("所有 Socket.IO 事件已註冊")

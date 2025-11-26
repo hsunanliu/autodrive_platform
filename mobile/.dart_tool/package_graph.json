@@ -14,15 +14,14 @@
         "flutter_map",
         "flutter_secure_storage",
         "flutter_typeahead",
+        "geolocator",
         "http",
         "latlong2",
         "provider",
-        "qr_flutter",
         "shared_preferences",
         "socket_io_client",
         "uni_links",
         "url_launcher",
-        "walletconnect_flutter_v2",
         "webview_flutter"
       ],
       "devDependencies": [
@@ -53,6 +52,18 @@
         "stream_channel",
         "test_api",
         "vector_math"
+      ]
+    },
+    {
+      "name": "geolocator",
+      "version": "12.0.0",
+      "dependencies": [
+        "flutter",
+        "geolocator_android",
+        "geolocator_apple",
+        "geolocator_platform_interface",
+        "geolocator_web",
+        "geolocator_windows"
       ]
     },
     {
@@ -100,9 +111,8 @@
     },
     {
       "name": "socket_io_client",
-      "version": "2.0.3+1",
+      "version": "3.0.2",
       "dependencies": [
-        "js",
         "logging",
         "socket_io_common"
       ]
@@ -124,40 +134,6 @@
         "flutter",
         "flutter_keyboard_visibility",
         "pointer_interceptor"
-      ]
-    },
-    {
-      "name": "qr_flutter",
-      "version": "4.1.0",
-      "dependencies": [
-        "flutter",
-        "qr"
-      ]
-    },
-    {
-      "name": "walletconnect_flutter_v2",
-      "version": "2.4.1",
-      "dependencies": [
-        "bs58",
-        "connectivity_plus",
-        "convert",
-        "cryptography",
-        "ed25519_edwards",
-        "event",
-        "flutter",
-        "freezed_annotation",
-        "http",
-        "json_annotation",
-        "logger",
-        "package_info_plus",
-        "pointycastle",
-        "shared_preferences",
-        "stack_trace",
-        "stream_channel",
-        "url_launcher",
-        "web3dart",
-        "web_socket_channel",
-        "x25519"
       ]
     },
     {
@@ -344,6 +320,52 @@
       ]
     },
     {
+      "name": "geolocator_windows",
+      "version": "0.2.5",
+      "dependencies": [
+        "flutter",
+        "geolocator_platform_interface"
+      ]
+    },
+    {
+      "name": "geolocator_web",
+      "version": "4.0.0",
+      "dependencies": [
+        "flutter",
+        "flutter_web_plugins",
+        "geolocator_platform_interface",
+        "web"
+      ]
+    },
+    {
+      "name": "geolocator_apple",
+      "version": "2.3.13",
+      "dependencies": [
+        "flutter",
+        "geolocator_platform_interface"
+      ]
+    },
+    {
+      "name": "geolocator_android",
+      "version": "4.6.2",
+      "dependencies": [
+        "flutter",
+        "geolocator_platform_interface",
+        "meta",
+        "uuid"
+      ]
+    },
+    {
+      "name": "geolocator_platform_interface",
+      "version": "4.2.6",
+      "dependencies": [
+        "flutter",
+        "meta",
+        "plugin_platform_interface",
+        "vector_math"
+      ]
+    },
+    {
       "name": "timezone",
       "version": "0.10.1",
       "dependencies": [
@@ -447,15 +469,8 @@
       ]
     },
     {
-      "name": "js",
-      "version": "0.6.7",
-      "dependencies": [
-        "meta"
-      ]
-    },
-    {
       "name": "socket_io_common",
-      "version": "2.0.3",
+      "version": "3.1.1",
       "dependencies": [
         "logging"
       ]
@@ -511,152 +526,6 @@
         "flutter_keyboard_visibility_web",
         "flutter_keyboard_visibility_windows",
         "meta"
-      ]
-    },
-    {
-      "name": "qr",
-      "version": "3.0.2",
-      "dependencies": [
-        "meta"
-      ]
-    },
-    {
-      "name": "x25519",
-      "version": "0.1.1",
-      "dependencies": [
-        "adaptive_number",
-        "collection"
-      ]
-    },
-    {
-      "name": "web_socket_channel",
-      "version": "2.4.5",
-      "dependencies": [
-        "async",
-        "crypto",
-        "stream_channel",
-        "web"
-      ]
-    },
-    {
-      "name": "web3dart",
-      "version": "2.7.3",
-      "dependencies": [
-        "async",
-        "convert",
-        "eip1559",
-        "eip55",
-        "http",
-        "json_rpc_2",
-        "pointycastle",
-        "sec",
-        "stream_channel",
-        "stream_transform",
-        "typed_data",
-        "uuid",
-        "wallet"
-      ]
-    },
-    {
-      "name": "pointycastle",
-      "version": "3.9.1",
-      "dependencies": [
-        "collection",
-        "convert",
-        "js"
-      ]
-    },
-    {
-      "name": "package_info_plus",
-      "version": "7.0.0",
-      "dependencies": [
-        "clock",
-        "ffi",
-        "flutter",
-        "flutter_web_plugins",
-        "http",
-        "meta",
-        "package_info_plus_platform_interface",
-        "path",
-        "web",
-        "win32"
-      ]
-    },
-    {
-      "name": "logger",
-      "version": "2.6.1",
-      "dependencies": [
-        "meta"
-      ]
-    },
-    {
-      "name": "json_annotation",
-      "version": "4.9.0",
-      "dependencies": [
-        "meta"
-      ]
-    },
-    {
-      "name": "freezed_annotation",
-      "version": "2.4.4",
-      "dependencies": [
-        "collection",
-        "json_annotation",
-        "meta"
-      ]
-    },
-    {
-      "name": "event",
-      "version": "2.1.2",
-      "dependencies": []
-    },
-    {
-      "name": "ed25519_edwards",
-      "version": "0.3.1",
-      "dependencies": [
-        "adaptive_number",
-        "collection",
-        "convert",
-        "crypto"
-      ]
-    },
-    {
-      "name": "cryptography",
-      "version": "2.7.0",
-      "dependencies": [
-        "collection",
-        "crypto",
-        "ffi",
-        "js",
-        "meta",
-        "typed_data"
-      ]
-    },
-    {
-      "name": "convert",
-      "version": "3.1.2",
-      "dependencies": [
-        "typed_data"
-      ]
-    },
-    {
-      "name": "connectivity_plus",
-      "version": "6.1.5",
-      "dependencies": [
-        "collection",
-        "connectivity_plus_platform_interface",
-        "flutter",
-        "flutter_web_plugins",
-        "meta",
-        "nm",
-        "web"
-      ]
-    },
-    {
-      "name": "bs58",
-      "version": "1.0.2",
-      "dependencies": [
-        "base_x"
       ]
     },
     {
@@ -854,6 +723,13 @@
       ]
     },
     {
+      "name": "logger",
+      "version": "2.6.1",
+      "dependencies": [
+        "meta"
+      ]
+    },
+    {
       "name": "async",
       "version": "2.12.0",
       "dependencies": [
@@ -903,17 +779,6 @@
       ]
     },
     {
-      "name": "leak_tracker",
-      "version": "11.0.2",
-      "dependencies": [
-        "clock",
-        "collection",
-        "meta",
-        "path",
-        "vm_service"
-      ]
-    },
-    {
       "name": "term_glyph",
       "version": "1.2.2",
       "dependencies": []
@@ -940,6 +805,23 @@
       "dependencies": [
         "source_span",
         "string_scanner"
+      ]
+    },
+    {
+      "name": "flutter_web_plugins",
+      "version": "0.0.0",
+      "dependencies": [
+        "flutter"
+      ]
+    },
+    {
+      "name": "uuid",
+      "version": "4.5.1",
+      "dependencies": [
+        "crypto",
+        "fixnum",
+        "meta",
+        "sprintf"
       ]
     },
     {
@@ -979,13 +861,6 @@
         "ffi",
         "meta",
         "xml"
-      ]
-    },
-    {
-      "name": "flutter_web_plugins",
-      "version": "0.0.0",
-      "dependencies": [
-        "flutter"
       ]
     },
     {
@@ -1042,116 +917,11 @@
       ]
     },
     {
-      "name": "adaptive_number",
-      "version": "1.0.0",
-      "dependencies": [
-        "fixnum"
-      ]
-    },
-    {
-      "name": "crypto",
-      "version": "3.0.6",
-      "dependencies": [
-        "typed_data"
-      ]
-    },
-    {
-      "name": "wallet",
-      "version": "0.0.13",
-      "dependencies": [
-        "convert",
-        "eip55",
-        "pointycastle",
-        "sec"
-      ]
-    },
-    {
-      "name": "typed_data",
-      "version": "1.4.0",
-      "dependencies": [
-        "collection"
-      ]
-    },
-    {
-      "name": "eip1559",
-      "version": "0.6.2",
-      "dependencies": [
-        "http"
-      ]
-    },
-    {
-      "name": "eip55",
-      "version": "1.0.2",
-      "dependencies": [
-        "pointycastle"
-      ]
-    },
-    {
-      "name": "stream_transform",
-      "version": "2.1.1",
-      "dependencies": []
-    },
-    {
-      "name": "json_rpc_2",
-      "version": "3.0.3",
-      "dependencies": [
-        "stack_trace",
-        "stream_channel"
-      ]
-    },
-    {
-      "name": "uuid",
-      "version": "4.5.1",
-      "dependencies": [
-        "crypto",
-        "fixnum",
-        "meta",
-        "sprintf"
-      ]
-    },
-    {
-      "name": "sec",
-      "version": "1.1.0",
-      "dependencies": [
-        "pointycastle"
-      ]
-    },
-    {
       "name": "win32",
       "version": "5.13.0",
       "dependencies": [
         "ffi"
       ]
-    },
-    {
-      "name": "package_info_plus_platform_interface",
-      "version": "3.2.1",
-      "dependencies": [
-        "flutter",
-        "meta",
-        "plugin_platform_interface"
-      ]
-    },
-    {
-      "name": "nm",
-      "version": "0.5.0",
-      "dependencies": [
-        "dbus"
-      ]
-    },
-    {
-      "name": "connectivity_plus_platform_interface",
-      "version": "2.0.1",
-      "dependencies": [
-        "flutter",
-        "meta",
-        "plugin_platform_interface"
-      ]
-    },
-    {
-      "name": "base_x",
-      "version": "2.0.1",
-      "dependencies": []
     },
     {
       "name": "path_provider",
@@ -1163,6 +933,13 @@
         "path_provider_linux",
         "path_provider_platform_interface",
         "path_provider_windows"
+      ]
+    },
+    {
+      "name": "js",
+      "version": "0.6.7",
+      "dependencies": [
+        "meta"
       ]
     },
     {
@@ -1216,9 +993,28 @@
       ]
     },
     {
-      "name": "vm_service",
-      "version": "14.3.1",
+      "name": "typed_data",
+      "version": "1.4.0",
+      "dependencies": [
+        "collection"
+      ]
+    },
+    {
+      "name": "fixnum",
+      "version": "1.1.1",
       "dependencies": []
+    },
+    {
+      "name": "sprintf",
+      "version": "7.0.0",
+      "dependencies": []
+    },
+    {
+      "name": "crypto",
+      "version": "3.0.6",
+      "dependencies": [
+        "typed_data"
+      ]
     },
     {
       "name": "petitparser",
@@ -1231,16 +1027,6 @@
     {
       "name": "args",
       "version": "2.7.0",
-      "dependencies": []
-    },
-    {
-      "name": "fixnum",
-      "version": "1.1.1",
-      "dependencies": []
-    },
-    {
-      "name": "sprintf",
-      "version": "7.0.0",
       "dependencies": []
     },
     {
@@ -1277,6 +1063,22 @@
       "dependencies": [
         "meta"
       ]
+    },
+    {
+      "name": "leak_tracker",
+      "version": "11.0.2",
+      "dependencies": [
+        "clock",
+        "collection",
+        "meta",
+        "path",
+        "vm_service"
+      ]
+    },
+    {
+      "name": "vm_service",
+      "version": "14.3.1",
+      "dependencies": []
     }
   ],
   "configVersion": 1

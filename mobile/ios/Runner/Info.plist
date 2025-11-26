@@ -63,5 +63,11 @@
 		<string>suiet</string>
 		<string>slush</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>我們需要您的位置來顯示附近的車輛並提供叫車服務</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>我們需要持續追蹤您的位置以提供即時導航服務</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>我們需要您的位置來提供叫車和導航服務</string>
 </dict>
 </plist>

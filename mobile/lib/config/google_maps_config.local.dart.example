@@ -1,0 +1,21 @@
+// mobile/lib/config/google_maps_config.local.dart.example
+/**
+ * Google Maps API Key 本地配置範例檔案
+ *
+ * ⚠️ 重要：
+ * 1. 複製此檔案為 google_maps_config.local.dart
+ * 2. 填入您的實際 Google Maps API Key
+ * 3. google_maps_config.local.dart 已加入 .gitignore，不會被提交到 Git
+ *
+ * 申請 API Key：
+ * https://console.cloud.google.com/google/maps-apis/credentials
+ *
+ * 需要啟用的服務：
+ * - Maps SDK for Android
+ * - Maps SDK for iOS
+ * - Street View Static API
+ */
+
+/// 本地 Google Maps API Key
+/// 請替換為您的實際 API Key
+String get localGoogleMapsApiKey => 'YOUR_GOOGLE_MAPS_API_KEY_HERE';

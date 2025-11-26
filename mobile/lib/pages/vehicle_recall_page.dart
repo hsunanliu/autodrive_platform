@@ -24,45 +24,110 @@ class _VehicleRecallPageState extends State<VehicleRecallPage> {
   bool _isLoading = false;
   String? _statusMessage;
   Timer? _pollTimer;
+  Timer? _animationTimer;
 
   // 召回中的車輛狀態
   Map<String, Map<String, dynamic>> _recallStatus = {};
+
+  // 車輛動畫位置（用於平滑移動）
+  // vehicle_id -> {'current': LatLng, 'target': LatLng, 'steps': int}
+  Map<String, Map<String, dynamic>> _vehicleAnimationStates = {};
 
   @override
   void initState() {
     super.initState();
     _loadRecallableVehicles();
-    _initializeWebSocket();
-    // ✅ 已移除輪詢 - 改用 WebSocket 實時車輛位置更新
+    _initializeWebSocket(); // 保留但暫時無法連接
+    _startAnimationTimer();
+    _startPolling(); // 🔄 臨時使用輪詢直到 WebSocket 修復
+  }
+
+  /// 啟動動畫計時器（每100ms更新一次位置）
+  void _startAnimationTimer() {
+    _animationTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
+      if (!mounted) return;
+
+      bool needsUpdate = false;
+
+      // 更新所有車輛的動畫位置
+      _vehicleAnimationStates.forEach((vehicleId, state) {
+        final current = state['current'] as LatLng;
+        final target = state['target'] as LatLng;
+        int steps = state['steps'] as int;
+
+        if (steps > 0) {
+          // 還有剩餘步數，繼續移動
+          final newLat = current.latitude + (target.latitude - current.latitude) / steps;
+          final newLng = current.longitude + (target.longitude - current.longitude) / steps;
+
+          state['current'] = LatLng(newLat, newLng);
+          state['steps'] = steps - 1;
+          needsUpdate = true;
+
+          // 更新 _vehicles 列表中的顯示位置
+          for (var i = 0; i < _vehicles.length; i++) {
+            if (_vehicles[i]['vehicle_id'] == vehicleId) {
+              _vehicles[i]['display_lat'] = newLat;
+              _vehicles[i]['display_lng'] = newLng;
+              break;
+            }
+          }
+        } else if (current.latitude != target.latitude || current.longitude != target.longitude) {
+          // 步數用完，直接跳到目標位置
+          state['current'] = target;
+          needsUpdate = true;
+
+          for (var i = 0; i < _vehicles.length; i++) {
+            if (_vehicles[i]['vehicle_id'] == vehicleId) {
+              _vehicles[i]['display_lat'] = target.latitude;
+              _vehicles[i]['display_lng'] = target.longitude;
+              break;
+            }
+          }
+        }
+      });
+
+      if (needsUpdate) {
+        setState(() {});
+      }
+    });
   }
 
   /// 初始化 WebSocket 監聽車輛位置更新
   Future<void> _initializeWebSocket() async {
     final ws = WebSocketService();
 
-    // 確保 WebSocket 已連接
-    if (!ws.isConnected) {
-      print('🔌 車輛召回頁面初始化 WebSocket 連接...');
-      await ws.connect();
-    }
+    print('🔌 [召回頁面] 開始設置 WebSocket 監聽器');
+    print('🔌 [召回頁面] 注意：不需要重新連接或加入房間');
+    print('🔌 [召回頁面] 司機頁面已經連接並加入了 drivers_online 房間');
 
     // 監聽車輛位置更新
     ws.on('vehicle_location_update', (data) {
-      print('📍 收到車輛位置更新: $data');
+      print('📍📍📍 [DEBUG] 收到車輛位置更新: $data');
+      print('📍 [DEBUG] mounted = $mounted');
       if (!mounted) return;
 
-      // 更新車輛位置
-      final vehicleId = data['vehicle_id'];
-      final lat = data['lat'];
-      final lng = data['lng'];
+      // 更新車輛位置（使用平滑動畫）
+      final vehicleId = data['vehicle_id'] as String?;
+      final lat = (data['lat'] as num?)?.toDouble();
+      final lng = (data['lng'] as num?)?.toDouble();
+
+      print('📍 [DEBUG] vehicleId=$vehicleId, lat=$lat, lng=$lng');
+      print('📍 [DEBUG] _vehicles.length=${_vehicles.length}');
 
       if (vehicleId != null && lat != null && lng != null) {
         setState(() {
-          // 更新車輛列表中的位置
+          // 更新車輛列表中的實際位置
           for (var i = 0; i < _vehicles.length; i++) {
             if (_vehicles[i]['vehicle_id'] == vehicleId) {
+              print('📍 [DEBUG] 找到匹配車輛，索引=$i');
+
               _vehicles[i]['current_lat'] = lat;
               _vehicles[i]['current_lng'] = lng;
+              _vehicles[i]['display_lat'] = lat;
+              _vehicles[i]['display_lng'] = lng;
+
+              print('📍 [DEBUG] 車輛位置已更新到 ($lat, $lng)');
               break;
             }
           }
@@ -92,6 +157,7 @@ class _VehicleRecallPageState extends State<VehicleRecallPage> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _animationTimer?.cancel();
     _mapController.dispose();
 
     // 清理 WebSocket 監聽器
@@ -100,6 +166,71 @@ class _VehicleRecallPageState extends State<VehicleRecallPage> {
     ws.off('vehicle_recall_completed');
 
     super.dispose();
+  }
+
+  /// 🔄 啟動輪詢（臨時方案，直到 WebSocket 修復）
+  /// 每 2 秒更新一次車輛位置
+  void _startPolling() {
+    _pollTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
+      if (!mounted) return;
+
+      // 只在有召回中的車輛時才輪詢
+      bool hasRecallingVehicle = _vehicles.any((v) => v['is_recalling'] == true);
+      if (!hasRecallingVehicle) return;
+
+      try {
+        final response = await ApiService.get('/vehicles/recall/available');
+
+        if (response['success'] == true && response['data'] != null) {
+          final updatedVehicles = List<Map<String, dynamic>>.from(
+            response['data']['vehicles'] ?? [],
+          );
+
+          // 更新每一輛車的位置
+          for (var updatedVehicle in updatedVehicles) {
+            final vehicleId = updatedVehicle['vehicle_id'];
+
+            // 找到對應的車輛
+            for (var i = 0; i < _vehicles.length; i++) {
+              if (_vehicles[i]['vehicle_id'] == vehicleId) {
+                final newLat = updatedVehicle['current_lat']?.toDouble();
+                final newLng = updatedVehicle['current_lng']?.toDouble();
+
+                if (newLat != null && newLng != null) {
+                  // 更新目標位置，讓動畫計時器自動處理平滑移動
+                  if (!_vehicleAnimationStates.containsKey(vehicleId)) {
+                    _vehicleAnimationStates[vehicleId] = {
+                      'current': LatLng(
+                        _vehicles[i]['current_lat']?.toDouble() ?? newLat,
+                        _vehicles[i]['current_lng']?.toDouble() ?? newLng,
+                      ),
+                      'target': LatLng(newLat, newLng),
+                      'steps': 20, // 2秒內完成移動 (20 * 100ms)
+                    };
+                  } else {
+                    // 更新目標位置
+                    _vehicleAnimationStates[vehicleId]!['target'] = LatLng(newLat, newLng);
+                    _vehicleAnimationStates[vehicleId]!['steps'] = 20;
+                  }
+
+                  // 更新實際位置（後端數據）
+                  _vehicles[i]['current_lat'] = newLat;
+                  _vehicles[i]['current_lng'] = newLng;
+
+                  // 更新召回狀態
+                  _vehicles[i]['is_recalling'] = updatedVehicle['is_recalling'];
+                }
+                break;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        print('❌ 輪詢更新失敗: $e');
+      }
+    });
+
+    print('🔄 [召回頁面] 已啟動輪詢（每 2 秒）');
   }
 
   /// 加載可召回的車輛
@@ -350,8 +481,9 @@ class _VehicleRecallPageState extends State<VehicleRecallPage> {
                 markers:
                     _vehicles
                         .map((vehicle) {
-                          final lat = vehicle['current_lat']?.toDouble();
-                          final lng = vehicle['current_lng']?.toDouble();
+                          // 優先使用動畫位置，否則使用實際位置
+                          final lat = (vehicle['display_lat'] ?? vehicle['current_lat'])?.toDouble();
+                          final lng = (vehicle['display_lng'] ?? vehicle['current_lng'])?.toDouble();
                           if (lat == null || lng == null) return null;
 
                           final isSelected =

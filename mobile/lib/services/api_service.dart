@@ -2,12 +2,12 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'http_client_manager.dart';
+import '../config/app_config.dart';
 
 class ApiService {
-  // 後端 API 基礎 URL
-  // 在真實設備上測試時使用 Mac 的 IP
-  // 後端 API URL（真機測試時使用本機 IP）
-  static const String baseUrl = 'http://192.168.0.64:8000/api/v1';
+  // 後端 API 基礎 URL（從配置讀取）
+  // 本地開發時修改 lib/config/app_config.local.dart
+  static final String baseUrl = AppConfig.backendUrl;
 
   // HTTP Client 管理器（單例）
   static final _httpClient = HttpClientManager();

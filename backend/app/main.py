@@ -20,7 +20,9 @@ sio = socketio.AsyncServer(
     async_mode="asgi",
     cors_allowed_origins="*",  # 生產環境要改
     logger=True,
-    engineio_logger=True
+    engineio_logger=True,
+    ping_timeout=60,  # 增加 ping 超時時間
+    ping_interval=25  # ping 間隔
 )
 
 # 全局變數來存儲 WebSocket 管理器和通知器
@@ -45,6 +47,11 @@ async def lifespan(app: FastAPI):
     """應用生命週期管理"""
     logger.info("🚀 Starting AutoDrive API...")
     logger.info("📡 WebSocket 伺服器已初始化")
+
+    # 設置召回模擬器的 WebSocket notifier
+    from app.services.recall_simulator import recall_simulator
+    recall_simulator.set_notifier(websocket_notifier)
+    logger.info("🚗 召回模擬器 WebSocket 通知已設置")
 
     # 啟動背景任務
     from app.tasks import start_auto_upgrade_task

@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local configuration (不提交到 git)
+lib/config/app_config.local.dart
+lib/config/google_maps_config.local.dart

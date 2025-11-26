@@ -32,7 +32,7 @@ pysui==0.65.0
 httpx>=0.27.0
 aiohttp==3.9.1
 
-# WebSocket 支援
+# WebSocket 支援 (5.x 支援 EIO v4，兼容 socket_io_client 3.x)
 python-socketio==5.10.0
 python-engineio==4.8.0
 

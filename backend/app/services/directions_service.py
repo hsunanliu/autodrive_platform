@@ -62,6 +62,7 @@ class DirectionsService:
                 'origin': f"{origin_lat},{origin_lng}",
                 'destination': f"{dest_lat},{dest_lng}",
                 'mode': 'driving',
+                'language': 'zh-TW',  # 繁體中文
                 'key': self.api_key
             }
 

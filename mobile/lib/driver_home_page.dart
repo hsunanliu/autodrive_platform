@@ -40,15 +40,12 @@ class _DriverHomePageState extends State<DriverHomePage> {
     // ✅ 已移除輪詢 - 改用 WebSocket 實時通知
   }
 
-  /// 初始化 WebSocket 連接並設置監聽
+  /// 設置 WebSocket 監聽（不重複建立連接）
   Future<void> _initializeWebSocket() async {
     final ws = WebSocketService();
 
-    // 確保 WebSocket 已連接
-    if (!ws.isConnected) {
-      print('🔌 司機端初始化 WebSocket 連接...');
-      await ws.connect();
-    }
+    // ✅ 不再主動 connect()，由統一入口管理連接
+    // WebSocket 應該在登入成功時統一初始化
 
     // 監聽行程狀態更新
     ws.on('trip_cancelled', (data) {
@@ -101,9 +98,31 @@ class _DriverHomePageState extends State<DriverHomePage> {
 
     // 處理進行中行程
     if (activeTripResult['success'] == true && activeTripResult['data'] != null) {
+      final activeTrip = activeTripResult['data'] as Map<String, dynamic>;
       setState(() {
-        _activeTrip = activeTripResult['data'] as Map<String, dynamic>?;
+        _activeTrip = activeTrip;
       });
+
+      // 如果是初始載入且有進行中的行程，自動跳轉到行程進行頁面
+      if (initial && activeTrip['trip_id'] != null) {
+        final tripId = activeTrip['trip_id'] as int;
+        print('🚗 檢測到進行中的行程 #$tripId，自動跳轉...');
+
+        // 延遲跳轉以確保 UI 已經建立完成
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => TripInProgressPage(
+                  session: _session,
+                  tripId: tripId,
+                ),
+              ),
+            );
+          }
+        });
+      }
     } else {
       setState(() {
         _activeTrip = null;

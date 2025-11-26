@@ -183,8 +183,12 @@ class TripSummary(BaseModel):
     status: TripStatus
     pickup_address: Optional[str]
     dropoff_address: Optional[str]
+    pickup_lat: Optional[float] = None
+    pickup_lng: Optional[float] = None
+    dropoff_lat: Optional[float] = None
+    dropoff_lng: Optional[float] = None
     distance_km: Optional[float]
-    total_amount: Optional[int]  # micro SUI
+    total_amount: Optional[float]  # SUI (資料庫中是 float)
     passenger_count: Optional[int] = 1
     requested_at: datetime
     completed_at: Optional[datetime]

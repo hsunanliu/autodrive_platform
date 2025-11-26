@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
 
 import 'payment_page.dart';
 import 'role_select_page.dart';
@@ -26,7 +27,8 @@ class PassengerHomePage extends StatefulWidget {
 class _PassengerHomePageState extends State<PassengerHomePage> {
   final MapController _mapController = MapController();
   final TextEditingController _searchController = TextEditingController();
-  final LatLng _userLocation = const LatLng(25.0330, 121.5654);
+  LatLng _userLocation = const LatLng(25.0330, 121.5654); // 預設位置（台北101）
+  bool _isLoadingLocation = true;
 
   // ✅ 移除不再使用的車輛相關變量
   Map<String, dynamic>? _tripEstimate;
@@ -40,8 +42,18 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
   String? _statusMessage;
   final WebSocketService _ws = WebSocketService();
 
-  // 🚗 司機位置追蹤
+  // 🚗 司機位置追蹤與模擬
   LatLng? _driverLocation;
+  LatLng? _passengerLocation;
+  int? _joinedTripId; // 當前已加入的 WebSocket 行程房間 ID
+  bool _tripJustCompleted = false; // 控制流程圖顯示已完成階段
+  bool _hasRealDriverUpdates = false; // 是否收到真正的司機位置更新
+  Timer? _driverAnimationTimer; // 乘客端模擬車輛移動
+  int _driverAnimationIndex = 0;
+  int _routeDurationSeconds = 0;
+  bool _driverAnimationCompleted = false;
+  bool _isCheckingTrip = false; // 避免重複查詢
+  bool _awaitingTripDismiss = false; // 乘客是否正在查看完成畫面
 
   // 🗺️ 路線數據
   List<LatLng> _routePoints = [];
@@ -50,9 +62,96 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
   @override
   void initState() {
     super.initState();
+    _getCurrentLocation(); // 🌍 獲取當前GPS位置
     _checkActiveTrip();
     // ✅ 移除車輛加載 - 不再需要選擇車輛
     _setupWebSocket();
+    _passengerLocation = _userLocation;
+    _startPolling();
+  }
+
+  /// 🌍 獲取當前GPS位置
+  Future<void> _getCurrentLocation() async {
+    try {
+      // 1. 檢查定位服務是否啟用
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) {
+        print('⚠️ 定位服務未啟用');
+        setState(() => _isLoadingLocation = false);
+        return;
+      }
+
+      // 2. 檢查定位權限
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          print('⚠️ 定位權限被拒絕');
+          setState(() => _isLoadingLocation = false);
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        print('⚠️ 定位權限永久被拒絕');
+        setState(() => _isLoadingLocation = false);
+        return;
+      }
+
+      // 3. 獲取當前位置
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _userLocation = LatLng(position.latitude, position.longitude);
+        _passengerLocation = _userLocation;
+        _isLoadingLocation = false;
+      });
+
+      // 4. 移動地圖到當前位置
+      try {
+        _mapController.move(_userLocation, 15);
+      } catch (e) {
+        print('⚠️ 地圖移動失敗: $e');
+      }
+
+      print('✅ GPS 定位成功: ${position.latitude}, ${position.longitude}');
+
+      // 5. 開始監聽位置變化（可選）
+      _startLocationUpdates();
+    } catch (e) {
+      print('❌ 獲取GPS位置失敗: $e');
+      setState(() => _isLoadingLocation = false);
+    }
+  }
+
+  StreamSubscription<Position>? _positionStreamSubscription;
+
+  /// 🌍 開始監聽位置變化
+  void _startLocationUpdates() {
+    const locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 10, // 移動10米才更新
+    );
+
+    _positionStreamSubscription = Geolocator.getPositionStream(
+      locationSettings: locationSettings,
+    ).listen((Position position) {
+      if (!mounted) return;
+
+      setState(() {
+        _userLocation = LatLng(position.latitude, position.longitude);
+        // 只有在沒有進行中的行程時才更新乘客位置
+        if (_activeTrip == null) {
+          _passengerLocation = _userLocation;
+        }
+      });
+
+      print('📍 位置更新: ${position.latitude}, ${position.longitude}');
+    });
   }
 
   /// 設置 WebSocket 事件監聽
@@ -63,6 +162,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
       if (mounted) {
         setState(() {
           _statusMessage = '司機已接單！';
+          _tripJustCompleted = false;
         });
         _checkActiveTrip();
       }
@@ -74,7 +174,12 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
       if (mounted) {
         setState(() {
           _statusMessage = '行程進行中';
+          _tripJustCompleted = false;
+          if (_driverLocation != null) {
+            _passengerLocation = _driverLocation;
+          }
         });
+        _maybeStartDriverRouteAnimation();
         _checkActiveTrip();
       }
     });
@@ -84,12 +189,29 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
       print('📨 乘客端收到行程已完成: $data');
       if (mounted) {
         setState(() {
-          _activeTrip = null;
+          if (_activeTrip != null) {
+            _activeTrip!['status'] = 'completed';
+          } else {
+            _activeTrip = {
+              'trip_id': data['trip_id'],
+              'status': 'completed',
+            };
+          }
           _statusMessage = '行程已完成';
-          _routePoints = [];
-          _waypoints = [];
           _driverLocation = null;
+          final dropoffLatLng = _parseLatLng(
+                _activeTrip?['dropoff_lat'],
+                _activeTrip?['dropoff_lng'],
+              ) ??
+              (_routePoints.isNotEmpty ? _routePoints.last : null);
+          if (dropoffLatLng != null) {
+            _passengerLocation = dropoffLatLng;
+          }
+          _tripJustCompleted = true;
+          _awaitingTripDismiss = true;
         });
+        _stopDriverRouteAnimation();
+        _checkActiveTrip();
       }
     });
 
@@ -97,13 +219,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
     _ws.on('trip_cancelled', (data) {
       print('📨 乘客端收到行程已取消: $data');
       if (mounted) {
-        setState(() {
-          _activeTrip = null;
-          _statusMessage = '行程已取消';
-          _driverLocation = null; // 清除司機位置
-          _routePoints = [];
-          _waypoints = [];
-        });
+        _clearActiveTripState(statusMessage: '行程已取消');
 
         // 顯示取消通知
         final cancelledBy = data['cancelled_by'] ?? 'unknown';
@@ -130,11 +246,16 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
         final lng = data['lng'];
 
         if (lat != null && lng != null) {
+          _hasRealDriverUpdates = true;
+          _stopDriverRouteAnimation();
           setState(() {
             _driverLocation = LatLng(
               lat is double ? lat : double.parse(lat.toString()),
               lng is double ? lng : double.parse(lng.toString()),
             );
+            if (_isPassengerOnboard) {
+              _passengerLocation = _driverLocation;
+            }
           });
 
           // 自動移動地圖跟隨司機位置
@@ -148,6 +269,208 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
     });
   }
 
+  void _joinTripRoom(int tripId) {
+    if (_joinedTripId == tripId) {
+      return;
+    }
+
+    if (_joinedTripId != null) {
+      print('🔄 離開上一個行程房間: $_joinedTripId');
+      _ws.leaveTrip(_joinedTripId!);
+    }
+
+    print('📡 加入乘客行程房間: $tripId');
+    _ws.joinTrip(tripId);
+    _joinedTripId = tripId;
+  }
+
+  void _leaveTripRoom() {
+    if (_joinedTripId == null) {
+      return;
+    }
+
+    print('📡 離開乘客行程房間: $_joinedTripId');
+    _ws.leaveTrip(_joinedTripId!);
+    _joinedTripId = null;
+  }
+
+  String _normalizeStatus(dynamic value) {
+    final raw = value?.toString().toLowerCase() ?? '';
+    final dotIndex = raw.lastIndexOf('.');
+    if (dotIndex >= 0 && dotIndex < raw.length - 1) {
+      return raw.substring(dotIndex + 1);
+    }
+    return raw;
+  }
+
+  bool get _isPassengerOnboard {
+    final status = _normalizeStatus(_activeTrip?['status']);
+    return status == 'picked_up' || status == 'in_progress';
+  }
+
+  LatLng? _parseLatLng(dynamic lat, dynamic lng) {
+    double? toDouble(dynamic value) {
+      if (value is double) return value;
+      if (value is int) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
+    final parsedLat = toDouble(lat);
+    final parsedLng = toDouble(lng);
+    if (parsedLat == null || parsedLng == null) {
+      return null;
+    }
+    return LatLng(parsedLat, parsedLng);
+  }
+
+  void _clearActiveTripState({String? statusMessage}) {
+    setState(() {
+      _activeTrip = null;
+      _statusMessage = statusMessage;
+      _routePoints = [];
+      _waypoints = [];
+      _driverLocation = null;
+      _passengerLocation = _userLocation;
+      _tripJustCompleted = false;
+      _hasRealDriverUpdates = false;
+      _routeDurationSeconds = 0;
+      _awaitingTripDismiss = false;
+      _driverAnimationCompleted = false;
+    });
+    _stopDriverRouteAnimation();
+    _leaveTripRoom();
+  }
+
+  void _dismissCompletedTripView() {
+    _clearActiveTripState(statusMessage: null);
+  }
+
+  void _stopDriverRouteAnimation() {
+    _driverAnimationTimer?.cancel();
+    _driverAnimationTimer = null;
+    _driverAnimationIndex = 0;
+    _driverAnimationCompleted = false;
+  }
+
+  void _maybeStartDriverRouteAnimation() {
+    if (_routePoints.isEmpty || _hasRealDriverUpdates || _driverAnimationTimer != null || _driverAnimationCompleted) {
+      return;
+    }
+
+    final status = _normalizeStatus(_activeTrip?['status']);
+    if (status == 'requested' || status == 'matched') {
+      return;
+    }
+
+    _startDriverRouteAnimation();
+  }
+
+  void _startDriverRouteAnimation() {
+    if (_routePoints.length < 2) {
+      return;
+    }
+
+    _stopDriverRouteAnimation();
+    _driverAnimationIndex = 0;
+    _driverAnimationCompleted = false;
+
+    final totalPoints = _routePoints.length;
+    const double speedMultiplier = 3.0; // 3倍速
+    int intervalMs;
+    if (_routeDurationSeconds > 0) {
+      intervalMs = (_routeDurationSeconds * 1000 / totalPoints / speedMultiplier).round();
+    } else {
+      intervalMs = (1000 / speedMultiplier).round();
+    }
+    intervalMs = intervalMs.clamp(200, 1500).toInt();
+
+    setState(() {
+      _driverLocation = _routePoints.first;
+      if (_isPassengerOnboard) {
+        _passengerLocation = _driverLocation;
+      }
+    });
+
+    // 地圖移動到起點
+    try {
+      _mapController.move(_routePoints.first, _mapController.camera.zoom);
+    } catch (e) {
+      print('⚠️ 地圖移動錯誤: $e');
+    }
+
+    _driverAnimationTimer = Timer.periodic(Duration(milliseconds: intervalMs), (timer) {
+      if (_hasRealDriverUpdates || _tripJustCompleted || _activeTrip == null) {
+        timer.cancel();
+        _driverAnimationTimer = null;
+        _driverAnimationCompleted = _tripJustCompleted;
+        return;
+      }
+
+      if (_driverAnimationIndex >= totalPoints - 1) {
+        timer.cancel();
+        _driverAnimationTimer = null;
+        _driverAnimationCompleted = true;
+        setState(() {
+          _driverLocation = _routePoints.last;
+          if (_isPassengerOnboard) {
+            _passengerLocation = _driverLocation;
+          }
+        });
+        // 地圖跟隨車輛到終點
+        try {
+          _mapController.move(_routePoints.last, _mapController.camera.zoom);
+        } catch (e) {
+          print('⚠️ 地圖移動錯誤: $e');
+        }
+        return;
+      }
+
+      _driverAnimationIndex++;
+      setState(() {
+        _driverLocation = _routePoints[_driverAnimationIndex];
+        if (_isPassengerOnboard) {
+          _passengerLocation = _driverLocation;
+        }
+      });
+
+      // 地圖跟隨車輛移動
+      try {
+        _mapController.move(_routePoints[_driverAnimationIndex], _mapController.camera.zoom);
+      } catch (e) {
+        print('⚠️ 地圖移動錯誤: $e');
+      }
+    });
+  }
+
+  void _startPolling() {
+    _pollingTimer?.cancel();
+    _pollingTimer = Timer.periodic(const Duration(seconds: 6), (_) {
+      if (!mounted) return;
+      // 如果沒有活躍行程且沒有等待關閉的完成畫面，跳過檢查
+      if (_activeTrip == null && !_tripJustCompleted && !_awaitingTripDismiss) {
+        return;
+      }
+      // 如果正在等待用戶關閉完成畫面，不要輪詢檢查（避免被強制退出房間）
+      if (_awaitingTripDismiss) {
+        return;
+      }
+      _checkActiveTrip();
+    });
+  }
+
+  void _syncPassengerWithDriver() {
+    LatLng? target = _driverLocation;
+    if (target == null && _routePoints.isNotEmpty) {
+      target = _routePoints[_driverAnimationIndex.clamp(0, _routePoints.length - 1)];
+    }
+    if (target != null) {
+      setState(() {
+        _passengerLocation = target;
+      });
+    }
+  }
+
   /// 載入行程路線數據
   Future<void> _loadTripRoute(int tripId) async {
     print('🗺️ 載入行程 $tripId 的路線...');
@@ -157,17 +480,27 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
 
       if (!mounted) return;
 
-      if (result['success'] == true && result['route_points'] != null) {
-        final routePointsData = result['route_points'] as List;
+      // 提取實際數據（被 _wrapResponse 包裝過）
+      final data = result['data'] as Map<String, dynamic>?;
+
+      if (result['success'] == true && data != null && data['route_points'] != null) {
+        final routePointsData = data['route_points'] as List;
         final routePoints = routePointsData
             .map((p) => LatLng(p['lat'] as double, p['lng'] as double))
             .toList();
 
-        final waypointsData = result['waypoints'] as List? ?? [];
+        final waypointsData = data['waypoints'] as List? ?? [];
+
+        final durationSeconds = (data['duration_seconds'] ?? 0).toInt();
 
         setState(() {
           _routePoints = routePoints;
           _waypoints = waypointsData.cast<Map<String, dynamic>>();
+          _routeDurationSeconds = durationSeconds;
+          if (!_isPassengerOnboard) {
+            final pickupLatLng = _parseLatLng(_activeTrip?['pickup_lat'], _activeTrip?['pickup_lng']);
+            _passengerLocation = pickupLatLng ?? _routePoints.first;
+          }
         });
 
         print('✅ 路線載入成功: ${routePoints.length} 個點, ${waypointsData.length} 個停靠點');
@@ -180,8 +513,18 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
             print('⚠️ 地圖移動失敗: $e');
           }
         }
+
+        _maybeStartDriverRouteAnimation();
       } else {
-        print('❌ 路線載入失敗: ${result['error']}');
+        // 更詳細的錯誤信息
+        final statusCode = result['statusCode'];
+        final error = result['error'] ?? result['data']?['detail'] ?? '未知錯誤';
+        print('❌ 路線載入失敗 (狀態碼 $statusCode): $error');
+
+        // 如果是權限問題，使用備用直線路線
+        if (statusCode == 401 || statusCode == 403) {
+          print('⚠️ 權限不足，無法獲取詳細路線');
+        }
       }
     } catch (e) {
       print('❌ 路線載入錯誤: $e');
@@ -189,46 +532,100 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
   }
 
   Future<void> _checkActiveTrip() async {
-    if (_session == null) return;
+    if (_isCheckingTrip) return;
+    _isCheckingTrip = true;
+    if (_session == null) {
+      _isCheckingTrip = false;
+      return;
+    }
 
-    print('🔍 檢查進行中的行程...');
+    try {
+      print('🔍 檢查進行中的行程...');
 
-    final result = await ApiService.getUserTrips(limit: 10);
+      final result = await ApiService.getUserTrips(limit: 10);
 
-    if (!mounted) return;
+      if (!mounted) return;
+      final previousTripId = _activeTrip?['trip_id'];
 
-    setState(() {
       if (result['success'] == true && result['data'] is List) {
         final trips = result['data'] as List;
         print('📋 找到 ${trips.length} 個行程');
 
-        // 查找進行中的行程
+        Map<String, dynamic>? detectedTrip;
         for (var trip in trips) {
-          final status = trip['status']?.toString().toLowerCase();
+          final status = _normalizeStatus(trip['status']);
           print('  - 行程 ${trip['trip_id']}: 狀態 = $status');
 
           if (status == 'requested' ||
               status == 'matched' ||
               status == 'accepted' ||
               status == 'picked_up' ||
-              status == 'in_progress') {
-            _activeTrip = trip as Map<String, dynamic>;
-            _statusMessage = '您有進行中的行程（狀態：$status）';
-            print('✅ 找到進行中的行程: ${trip['trip_id']}');
-
-            // 載入路線數據
-            _loadTripRoute(trip['trip_id']);
+              status == 'in_progress' ||
+              status == 'completed') {
+            detectedTrip = Map<String, dynamic>.from(trip as Map<String, dynamic>);
+            final tripId = detectedTrip['trip_id'];
+            print('✅ 找到進行中的行程: $tripId');
             break;
           }
         }
 
-        if (_activeTrip == null) {
+        if (!mounted) return;
+
+        if (detectedTrip != null) {
+          final hasActiveTrip = _activeTrip != null;
+          final tripData = Map<String, dynamic>.from(detectedTrip);
+          final status = _normalizeStatus(tripData['status']);
+          final tripId = tripData['trip_id'] as int;
+          final bool isNewTrip = previousTripId == null || previousTripId != tripId;
+          final pickupLatLng = _parseLatLng(tripData['pickup_lat'], tripData['pickup_lng']);
+
+          setState(() {
+            _activeTrip = tripData;
+            _statusMessage = '您有進行中的行程（狀態：$status）';
+            _tripJustCompleted = status == 'completed' || _tripJustCompleted;
+            if (status == 'completed') {
+              _awaitingTripDismiss = true;
+            }
+            if (isNewTrip) {
+              _hasRealDriverUpdates = false;
+              _driverLocation = null;
+              if (status == 'completed') {
+                final dropoffLatLng = _parseLatLng(
+                      tripData['dropoff_lat'],
+                      tripData['dropoff_lng'],
+                    ) ??
+                    (_routePoints.isNotEmpty ? _routePoints.last : null);
+                _passengerLocation = dropoffLatLng ?? _userLocation;
+              } else {
+                _passengerLocation = pickupLatLng ?? _userLocation;
+              }
+            } else if (status == 'completed') {
+              final dropoffLatLng = _parseLatLng(
+                tripData['dropoff_lat'],
+                tripData['dropoff_lng'],
+              );
+              if (dropoffLatLng != null) {
+                _passengerLocation = dropoffLatLng;
+              }
+            }
+          });
+
+          if (isNewTrip) {
+            _stopDriverRouteAnimation();
+          }
+
+          _joinTripRoom(tripId);
+          await _loadTripRoute(tripId);
+        } else if (!_awaitingTripDismiss) {
           print('❌ 沒有進行中的行程');
+          _clearActiveTripState(statusMessage: null);
         }
       } else {
         print('❌ 獲取行程失敗: ${result['error']}');
       }
-    });
+    } finally {
+      _isCheckingTrip = false;
+    }
   }
 
   Future<void> _cancelActiveTrip() async {
@@ -286,13 +683,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
     if (!mounted) return;
 
     if (result['success'] == true) {
-      setState(() {
-        _activeTrip = null;
-        _statusMessage = '行程已取消';
-        _routePoints = [];
-        _waypoints = [];
-        _driverLocation = null;
-      });
+      _clearActiveTripState(statusMessage: '行程已取消');
     } else {
       setState(() {
         _statusMessage = '取消失敗：${result['error']}';
@@ -319,6 +710,8 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
         }
         _statusMessage = '已確認上車，行程開始';
       });
+      _syncPassengerWithDriver();
+      _maybeStartDriverRouteAnimation();
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -344,12 +737,15 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
   void dispose() {
     _pollingTimer?.cancel();
     _searchController.dispose();
+    _positionStreamSubscription?.cancel(); // 🌍 取消位置監聽
     // 移除 WebSocket 監聽器
     _ws.off('trip_accepted');
     _ws.off('trip_started');
     _ws.off('trip_completed');
     _ws.off('trip_cancelled');
     _ws.off('driver_location_update');
+    _stopDriverRouteAnimation();
+    _leaveTripRoom();
     super.dispose();
   }
 
@@ -429,10 +825,25 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
 
     if (result['success'] == true && result['data'] is Map) {
       final trip = result['data'] as Map<String, dynamic>;
+      final pickupLatLng = _parseLatLng(trip['pickup_lat'], trip['pickup_lng']);
       setState(() {
         _activeTrip = trip;
         _statusMessage = '叫車成功！行程 ID: ${trip['trip_id']}';
+        _tripJustCompleted = false;
+        _hasRealDriverUpdates = false;
+        _routePoints = [];
+        _waypoints = [];
+        _driverLocation = null;
+        _passengerLocation = pickupLatLng ?? _userLocation;
       });
+      _stopDriverRouteAnimation();
+
+      final tripId = (trip['trip_id'] is int)
+          ? trip['trip_id'] as int
+          : int.tryParse(trip['trip_id']?.toString() ?? '');
+      if (tripId != null) {
+        _joinTripRoom(tripId);
+      }
 
       // 獲取費用（根據用戶選擇的定價方式）
       int? fareAmount;
@@ -714,16 +1125,29 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
                   ),
                 MarkerLayer(
                   markers: [
-                    Marker(
-                      point: _userLocation,
-                      width: 40,
-                      height: 40,
-                      child: const Icon(
-                        Icons.person_pin_circle,
-                        color: Colors.amber,
-                        size: 32,
+                    // 黃色乘客圖標：未上車時顯示在上車點，完成時顯示在目的地
+                    if (!_isPassengerOnboard || _normalizeStatus(_activeTrip?['status']) == 'completed')
+                      Marker(
+                        point: () {
+                          // 如果行程已完成，顯示在目的地
+                          if (_normalizeStatus(_activeTrip?['status']) == 'completed') {
+                            final dropoffLatLng = _parseLatLng(
+                              _activeTrip?['dropoff_lat'],
+                              _activeTrip?['dropoff_lng'],
+                            );
+                            return dropoffLatLng ?? (_routePoints.isNotEmpty ? _routePoints.last : _userLocation);
+                          }
+                          // 否則顯示在當前乘客位置（上車點）
+                          return _passengerLocation ?? _userLocation;
+                        }(),
+                        width: 40,
+                        height: 40,
+                        child: const Icon(
+                          Icons.person_pin_circle,
+                          color: Colors.amber,
+                          size: 32,
+                        ),
                       ),
-                    ),
                     if (_destination != null)
                       Marker(
                         point: _destination!,
@@ -808,7 +1232,8 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
   Widget _buildBottomSheet() {
     // 如果有進行中的行程，顯示行程狀態
     if (_activeTrip != null) {
-      final status = _activeTrip!['status'] ?? 'requested';
+      final status = _normalizeStatus(_activeTrip?['status'] ?? 'requested');
+      final bool isCompleted = status == 'completed';
 
       // 定義狀態映射
       String getStatusText(String status) {
@@ -941,7 +1366,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
                 ),
 
             // 如果行程狀態是 accepted，顯示確認上車按鈕（自駕車到達）
-            if (_activeTrip!['status'] == 'accepted')
+            if (status == 'accepted')
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: SizedBox(
@@ -970,7 +1395,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
               ),
 
             // 如果行程狀態是 picked_up，顯示支付按鈕
-            if (_activeTrip!['status'] == 'picked_up')
+            if (status == 'picked_up')
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: SizedBox(
@@ -997,51 +1422,101 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
                   ),
                 ),
               ),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _openTripHistory,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1DB954),
-                      foregroundColor: Colors.black,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+            if (isCompleted)
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _openTripHistory,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1DB954),
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                       ),
-                    ),
-                    child: const Text(
-                      '查看詳情',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: _cancelActiveTrip,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red.shade700,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      '取消行程',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
+                      child: const Text(
+                        '查看行程歷史',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
-            ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () {
+                        _awaitingTripDismiss = false;
+                        _dismissCompletedTripView();
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blueGrey.shade600,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        '完成',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            else
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _openTripHistory,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1DB954),
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        '查看詳情',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: _cancelActiveTrip,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red.shade700,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        '取消行程',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
           ],
         ),
       ),

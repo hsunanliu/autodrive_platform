@@ -5,7 +5,7 @@
 import asyncio
 import logging
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.vehicle import Vehicle
@@ -21,6 +21,11 @@ class RecallSimulator:
     def __init__(self):
         self.location_service = LocationService()
         self.active_recalls = {}  # vehicle_id -> {'task': task, 'route': route_points, 'current_idx': idx}
+        self._notifier = None  # WebSocket notifier（延遲初始化）
+
+    def set_notifier(self, notifier):
+        """設置 WebSocket notifier"""
+        self._notifier = notifier
 
     async def simulate_recall(
         self,
@@ -75,6 +80,19 @@ class RecallSimulator:
 
                     await session.commit()
                     logger.info(f"✅ 車輛 {vehicle_id} 召回完成")
+
+                    # 🔔 通知召回完成
+                    if self._notifier:
+                        try:
+                            await self._notifier.notify_vehicle_recall_completed(
+                                vehicle_id=vehicle_id,
+                                final_lat=final_point.lat,
+                                final_lng=final_point.lng,
+                                driver_id=vehicle.owner_id
+                            )
+                        except Exception as e:
+                            logger.error(f"發送召回完成通知失敗: {e}")
+
                     break
 
                 # 獲取當前目標點（下一個路線點）
@@ -115,8 +133,9 @@ class RecallSimulator:
                     # 繼續下一個循環，不等待
                     continue
 
-                # 計算下一個位置（假設速度30 km/h，每5秒移動約41.67米 = 0.04167 km）
-                move_distance_km = min(0.04167, distance_to_next)
+                # 計算下一個位置（假設速度90 km/h，每5秒移動約125米 = 0.125 km）
+                # 3倍速：原本30 km/h -> 現在90 km/h
+                move_distance_km = min(0.125, distance_to_next)
 
                 # 計算移動方向（向下一個路線點移動）
                 lat_diff = target_point.lat - vehicle.current_lat
@@ -136,8 +155,21 @@ class RecallSimulator:
                         f"({vehicle.current_lat:.6f}, {vehicle.current_lng:.6f})"
                     )
 
-                # 等待5秒再更新位置
-                await asyncio.sleep(5)
+                    # 🔔 通過 WebSocket 發送位置更新
+                    if self._notifier:
+                        try:
+                            await self._notifier.notify_vehicle_location_update(
+                                vehicle_id=vehicle_id,
+                                lat=vehicle.current_lat,
+                                lng=vehicle.current_lng,
+                                driver_id=vehicle.owner_id
+                            )
+                        except Exception as e:
+                            logger.error(f"發送位置更新通知失敗: {e}")
+
+                # 等待1.67秒再更新位置（3倍速）
+                # 原本5秒 -> 現在1.67秒，更新頻率更高，動畫更平滑
+                await asyncio.sleep(1.67)
 
         except asyncio.CancelledError:
             logger.info(f"⚠️ 車輛 {vehicle_id} 的召回模擬被中斷")

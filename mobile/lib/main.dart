@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:uni_links/uni_links.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'firebase_options.dart';
 
 import 'driver_earnings_page.dart';
 import 'driver_home_page_new.dart';
@@ -35,9 +36,11 @@ StreamSubscription? _linkSubscription;
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 初始化 Firebase（如果配置文件存在）
+  // 初始化 Firebase
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
     print('✅ Firebase 初始化成功');
 
     // 設置背景消息處理器
@@ -46,8 +49,8 @@ Future<void> main() async {
     // 初始化通知服務
     await NotificationService().initialize();
   } catch (e) {
-    print('⚠️ Firebase 初始化失敗（可能未配置）: $e');
-    print('   請參考 FIREBASE_SETUP_GUIDE.md 進行配置');
+    print('⚠️ Firebase 初始化失敗: $e');
+    print('   請檢查 firebase_options.dart 配置');
   }
 
   // 初始化 WalletConnector

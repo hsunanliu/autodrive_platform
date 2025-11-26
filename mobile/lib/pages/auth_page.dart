@@ -1,6 +1,7 @@
 // mobile/lib/pages/auth_page.dart
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../services/websocket_service.dart';
 import '../session_manager.dart';
 
 class AuthPage extends StatefulWidget {
@@ -53,6 +54,11 @@ class _AuthPageState extends State<AuthPage> {
         );
 
         await SessionManager.saveSession(session);
+
+        // ✅ 統一初始化 WebSocket 連接（登入成功後唯一入口）
+        print('🔌 登入成功，初始化 WebSocket 連接...');
+        await WebSocketService().connect();
+        print('✅ WebSocket 初始化完成');
 
         if (!mounted) return;
 
