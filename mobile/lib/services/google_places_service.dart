@@ -3,13 +3,14 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
+import '../config/google_maps_config.dart';
 import 'http_client_manager.dart';
 
 class GooglePlacesService {
   // HTTP Client 管理器（單例）
   static final _httpClient = HttpClientManager();
   // Google Places API Key
-  static const String _apiKey = 'AIzaSyB0mx8E7G-8QRwNct2tNraZn4K-CJH7Pcc';
+  static String get _apiKey => GoogleMapsConfig.apiKey;
   
   // 使用新的 Places API (New) 端點
   static const String _autocompleteUrl =

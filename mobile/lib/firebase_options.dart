@@ -53,7 +53,7 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyAiTe7Aqfa0V-MQOl0_kMEKKfg2jP2srAQ',
+    apiKey: 'YOUR_FIREBASE_API_KEY',
     appId: '1:619584735628:ios:464114136b0acd44e2eea9',
     messagingSenderId: '619584735628',
     projectId: 'autodrive-fcd6e',
