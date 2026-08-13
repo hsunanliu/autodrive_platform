@@ -86,6 +86,14 @@
 		<string>suiet</string>
 		<string>slush</string>
 	</array>
+	<!-- iOS 14+ 無線偵錯必要：Flutter 用 Bonjour(mDNS) 找 Dart VM Service。
+	     缺這兩個 key 時系統不會跳「區域網路」授權，VM Service 永遠找不到。 -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>開發偵錯時需要透過區域網路連線 Dart VM Service</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_dartVmService._tcp</string>
+	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>我們需要您的位置來顯示附近的車輛並提供叫車服務</string>
 	<key>NSLocationAlwaysUsageDescription</key>
