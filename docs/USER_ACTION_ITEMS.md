@@ -56,8 +56,8 @@
 
 ## 🟢 P2 — 本機驗證（我這環境跑不了 Flutter）
 
-- [ ] `cd mobile && flutter pub get && flutter analyze`（驗證我這幾輪寫的 Dart；新增套件：
-  `flutter_appauth`、`ed25519_edwards`、`pointycastle`）
+- [x] ~~`cd mobile && flutter pub get && flutter analyze`~~ → 2026-08-13 已由 Claude 代跑：
+  **0 error**（修掉範本 widget_test 的 MyApp 引用），剩 17 warning / 402 info（unused/deprecation，無功能影響）
 - [ ] 實機/模擬器跑 Google 登入（免助記詞）
 - [ ] 實機測付款 → 確認 `execute` 回傳 `escrow_object_id`（鏈上建立 Escrow）
 - [ ] 把第一個實機錯誤貼給我（很可能是 Enoki 簽名格式，排查點見 `docs/ZKLOGIN_SETUP.md`）

@@ -197,7 +197,7 @@
 - [x] ✅ **F1** PTB 合併 + on-chain 瘦身：新增 `payment_escrow::release_and_receipt_by_agent`（單一交易原子完成釋放+開收據，省一筆 gas，杜絕「已放款但沒收據」中間態）；`trip_receipt::create_receipt_for` 供跨模組複合呼叫。費率已上鏈、大資料已改指 Walrus blob。（測試 13/13 PASS）
 - [x] ✅ **F2** 死碼清理：刪 7 個 0-byte source module、17 個空/IOTA 測試檔、`run_tests.sh`
 - [x] ✅ **G1** Move 安全測試（`tests/security_tests.move`，**12 tests 全 PASS**）：託管授權、Agent cap 額度/撤銷/動作白名單/時效、評價綁行程、reputation 提權防護、DID 位址綁定
-- [ ] ⬜ **G2** 後端整合測試（需 pytest harness）
+- [x] ✅ **G2** 後端整合測試（`backend/tests/integration/`，**43 tests 全 PASS**）：agent 護欄額度/白名單/跨用戶、agent_service 缺金鑰與鏈上失敗明確報錯（不回假 hash）、delegation 過期/撤銷 cap 拒用、Walrus content-hash 校驗、zkp_verifier fail-closed、trips 模擬付款僅 MOCK_MODE、refund approve/reject。外部依賴全 fake，`docker compose exec backend python -m pytest` 執行；舊 hackathon 測試隔離至 `tests/legacy/`
 
 > **里程碑（2026-07-12）**：`sui move test` 綠燈，9 個安全測試證明核心修復有效。
 
@@ -205,6 +205,9 @@
 
 ## 8. 變更日誌 (Changelog)
 
+- 2026-08-13 · [任務3 Flutter 靜態驗證] · `flutter pub get && flutter analyze`：唯一 error 是範本遺留 `test/widget_test.dart` 引用不存在的 `MyApp`，改為對應 `ProjectDappApp` 的最小 smoke test → **0 error**。剩 17 warning（全為 unused import/field/variable）與 402 info（`withOpacity`/`WillPopScope` deprecation、`avoid_print` 等），無功能影響，留待日後清理。 · `mobile/test/widget_test.dart`
+- 2026-08-13 · [G2 後端整合測試 ✅] · 新增 `backend/tests/integration/` pytest harness（**43 tests 全 PASS**，`docker compose exec backend python -m pytest`）。外部依賴（Sui RPC、Walrus、DB、snarkjs）全用可注入 fake、不製造假交易 hash。覆蓋：agent 護欄額度/每日剩餘/動作白名單/跨用戶/髒 object id、agent_service 缺金鑰與鏈上失敗明確報錯不回假 hash、delegation 過期/撤銷 cap 拒用與額度時效解析、walrus content-hash 不符拋錯不重試、zkp_verifier 缺 key fail-closed、trips 模擬付款僅 MOCK_MODE、refund_service_v2 approve 鏈上失敗不落 DB / reject 僅改 DB / 已處理防重複。舊 hackathon 測試（需 docker DB、無法收集）隔離至 `tests/legacy/`。 · `backend/pytest.ini`, `backend/tests/integration/*`(新), `backend/tests/legacy/*`(移動)
+- 2026-08-13 · [任務1 主題式 commit ✅] · 2026-07-12〜08-10 全部加固成果（80+ 修改、20+ 刪除、90+ 新檔）拆成 7 個主題 commit（chore 產物清理 / fix(contracts) / fix(backend) / feat(backend) / feat(mobile) / feat(dashboard) / docs），僅 commit 未 push。提交前驗證：`sui move build` 綠燈、`sui move test` **19/19 PASS**、後端 128 個 `.py` 全 py_compile 通過、秘密掃描無命中（`.env`/`*.local.dart` 均未入庫；`.DS_Store`、`mobile/.dart_tool/` 等已 `git rm --cached` 停止追蹤）。備註：`refund_service_v2._try_blockchain_refund`（create 路徑）仍會產生標記為 `pending_signature` 的 sha256 佔位 hash 回傳給呼叫端，雖未冒充成功但建議後續改為回傳待簽參數。 · 全 repo
 - 2026-08-10 · [CLAUDE.md 過期 package id 更新（P3）] · 把 CLAUDE.md「關鍵事實」的 package 由過期 `0xa6232c…790380b` 改為現行加固版 `0xb761c6f5…e23f`（與 `.env` CONTRACT_PACKAGE_ID 一致），並註明舊值與 `Published.toml` 已過期勿引用。`Published.toml`（sui move 產生檔）待下次部署自動更新。檔案：`CLAUDE.md`, `docs/USER_ACTION_ITEMS.md`
   - 註：本輪 Bash 工具因 `/login` 後 CLI 進入需重裝狀態而失效，無法做 RPC 上鏈物件驗證；改做純文件工作。使用者需 `node node_modules/@anthropic-ai/claude-code/install.cjs` 或重開 session 修復。
 - 2026-07-29 · [啟動閃退根因修復：Firebase 佔位符 API key] ·
