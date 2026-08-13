@@ -10,6 +10,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_localizations:
+    sdk: flutter
   http: ^1.4.0
   flutter_map: ^6.2.1
   latlong2: ^0.9.0
@@ -34,6 +36,12 @@ dependencies:
   flutter_local_notifications: ^19.5.0
   # GPS 定位功能
   geolocator: ^12.0.0
+  crypto: ^3.0.7
+  # zkLogin 非託管登入：OAuth（需注入 nonce → 用 AppAuth）+ 臨時 ed25519 金鑰
+  flutter_appauth: ^7.0.1
+  ed25519_edwards: ^0.3.1
+  # Sui 交易簽名需 blake2b-256（intent message 摘要）
+  pointycastle: ^3.9.1
 
 dev_dependencies:
   flutter_test:

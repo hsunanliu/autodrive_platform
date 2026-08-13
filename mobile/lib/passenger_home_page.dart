@@ -155,7 +155,11 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
   }
 
   /// 設置 WebSocket 事件監聽
-  void _setupWebSocket() {
+  void _setupWebSocket() async {
+    // 先連接 WebSocket
+    await _ws.connect();
+    print('🔌 乘客端 WebSocket 連接已初始化');
+
     // 監聽行程被司機接受
     _ws.on('trip_accepted', (data) {
       print('📨 乘客端收到行程已被接受: $data');
@@ -269,7 +273,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
     });
   }
 
-  void _joinTripRoom(int tripId) {
+  void _joinTripRoom(int tripId) async {
     if (_joinedTripId == tripId) {
       return;
     }
@@ -277,6 +281,25 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
     if (_joinedTripId != null) {
       print('🔄 離開上一個行程房間: $_joinedTripId');
       _ws.leaveTrip(_joinedTripId!);
+    }
+
+    // 確保 WebSocket 已連接
+    if (!_ws.isConnected) {
+      print('🔌 WebSocket 未連接，嘗試重新連接...');
+      await _ws.connect();
+
+      // 等待連接成功（最多等 5 秒）
+      int retries = 0;
+      while (!_ws.isConnected && retries < 10) {
+        await Future.delayed(const Duration(milliseconds: 500));
+        retries++;
+        print('🔄 等待 WebSocket 連接... ($retries/10)');
+      }
+
+      if (!_ws.isConnected) {
+        print('❌ WebSocket 連接失敗，無法加入房間');
+        return;
+      }
     }
 
     print('📡 加入乘客行程房間: $tripId');
@@ -359,7 +382,10 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
     }
 
     final status = _normalizeStatus(_activeTrip?['status']);
-    if (status == 'requested' || status == 'matched') {
+    // 只有在乘客已上車（picked_up）時才開始模擬動畫
+    // 其他狀態（requested, matched, accepted, arrived）都不啟動
+    if (status != 'picked_up' && status != 'in_progress') {
+      print('🚗 乘客端：等待上車確認，目前狀態: $status');
       return;
     }
 
@@ -371,19 +397,25 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
       return;
     }
 
+    // 如果已經收到真實的 WebSocket 更新，不要啟動本地動畫
+    if (_hasRealDriverUpdates) {
+      print('🔄 已收到 WebSocket 位置更新，跳過本地動畫');
+      return;
+    }
+
     _stopDriverRouteAnimation();
     _driverAnimationIndex = 0;
     _driverAnimationCompleted = false;
 
     final totalPoints = _routePoints.length;
-    const double speedMultiplier = 3.0; // 3倍速
+    const double speedMultiplier = 1.5; // 1.5倍速（與車主端一致）
     int intervalMs;
     if (_routeDurationSeconds > 0) {
       intervalMs = (_routeDurationSeconds * 1000 / totalPoints / speedMultiplier).round();
     } else {
       intervalMs = (1000 / speedMultiplier).round();
     }
-    intervalMs = intervalMs.clamp(200, 1500).toInt();
+    intervalMs = intervalMs.clamp(200, 1000); // 200-1000ms，更自然的速度
 
     setState(() {
       _driverLocation = _routePoints.first;
@@ -398,6 +430,8 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
     } catch (e) {
       print('⚠️ 地圖移動錯誤: $e');
     }
+
+    print('🚗 乘客端：啟動本地模擬動畫 (${totalPoints} 個點, 間隔 ${intervalMs}ms)');
 
     _driverAnimationTimer = Timer.periodic(Duration(milliseconds: intervalMs), (timer) {
       if (_hasRealDriverUpdates || _tripJustCompleted || _activeTrip == null) {
@@ -556,12 +590,12 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
           final status = _normalizeStatus(trip['status']);
           print('  - 行程 ${trip['trip_id']}: 狀態 = $status');
 
+          // 只檢查真正「進行中」的狀態，不包含 completed
           if (status == 'requested' ||
               status == 'matched' ||
               status == 'accepted' ||
               status == 'picked_up' ||
-              status == 'in_progress' ||
-              status == 'completed') {
+              status == 'in_progress') {
             detectedTrip = Map<String, dynamic>.from(trip as Map<String, dynamic>);
             final tripId = detectedTrip['trip_id'];
             print('✅ 找到進行中的行程: $tripId');
@@ -632,16 +666,41 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
     if (_activeTrip == null) return;
 
     final tripId = _activeTrip!['trip_id'];
-    final status = _activeTrip!['status'] ?? 'requested';
+    final status = _normalizeStatus(_activeTrip!['status']);
+
+    // 乘客上車後（picked_up 或 in_progress）不允許取消行程
+    if (status == 'picked_up' || status == 'in_progress') {
+      await showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          backgroundColor: const Color(0xFF2E2E2E),
+          title: const Row(
+            children: [
+              Icon(Icons.block, color: Colors.red),
+              SizedBox(width: 8),
+              Text('無法取消', style: TextStyle(color: Colors.white)),
+            ],
+          ),
+          content: const Text(
+            '行程已開始，無法取消。\n\n'
+            '請完成行程並付款後，如有服務問題可申請退款。',
+            style: TextStyle(color: Colors.white70, fontSize: 15),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('我知道了'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
 
     // 根據行程狀態決定提示訊息
     String warningMessage;
-    if (status == 'picked_up' || status == 'in_progress') {
-      warningMessage = '⚠️ 注意：行程已開始，取消將不會退款\n\n'
-          '費用將支付給車輛運營方。\n'
-          '如有服務問題，請在行程完成後申請退款。';
-    } else if (status == 'accepted') {
-      warningMessage = '車輛尚未到達，取消後將全額退款。';
+    if (status == 'accepted' || status == 'arrived') {
+      warningMessage = '車輛已派遣，取消後將全額退款。';
     } else {
       warningMessage = '確定要取消當前行程嗎？';
     }
@@ -1108,7 +1167,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
               children: [
                 TileLayer(
                   urlTemplate:
-                      'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=pk.eyJ1IjoiaHkxaWlpIiwiYSI6ImNtZW4wcHdraDB3a3Mya3Nlc29mNGY3ZHAifQ.c1EtA8uDOpR7Q2-uPVJSaA',
+                      'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=MAPBOX_TOKEN_REMOVED',
                   userAgentPackageName: 'com.autodrive.app',
                   // 使用默認的 NetworkTileProvider，不傳遞 httpClient
                 ),
@@ -1495,26 +1554,28 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
                     ),
                   ),
                   const SizedBox(width: 10),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _cancelActiveTrip,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red.shade700,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                  // 上車後不顯示取消按鈕
+                  if (!_isPassengerOnboard)
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _cancelActiveTrip,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red.shade700,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
-                      ),
-                      child: const Text(
-                        '取消行程',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
+                        child: const Text(
+                          '取消行程',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     ),
-                  ),
                 ],
               ),
           ],
@@ -1731,7 +1792,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
                     ),
                     children: [
                       TileLayer(
-                        urlTemplate: 'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=pk.eyJ1IjoiaHkxaWlpIiwiYSI6ImNtZW4wcHdraDB3a3Mya3Nlc29mNGY3ZHAifQ.c1EtA8uDOpR7Q2-uPVJSaA',
+                        urlTemplate: 'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=MAPBOX_TOKEN_REMOVED',
                         userAgentPackageName: 'com.autodrive.app',
                       ),
                       // 標記層

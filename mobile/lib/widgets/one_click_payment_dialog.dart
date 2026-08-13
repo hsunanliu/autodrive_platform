@@ -15,6 +15,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/api_service.dart';
+import '../services/zklogin_payment_service.dart';
 
 class OneClickPaymentDialog extends StatefulWidget {
   final int tripId;
@@ -45,6 +46,7 @@ class _OneClickPaymentDialogState extends State<OneClickPaymentDialog>
   String? _unsignedHash;
   String? _signedHash;
   String? _transactionDigest;
+  String? _escrowObjectId;
 
   // 動畫控制器
   late AnimationController _animationController;
@@ -532,6 +534,7 @@ class _OneClickPaymentDialogState extends State<OneClickPaymentDialog>
             Navigator.pop(context, {
               'success': true,
               'tx_hash': _transactionDigest,
+              'escrow_object_id': _escrowObjectId,
               'message': '支付成功',
             });
           },
@@ -647,34 +650,45 @@ class _OneClickPaymentDialogState extends State<OneClickPaymentDialog>
 
     _animationController.animateTo(0.6);
 
-    try {
-      // 調用後端 API 創建託管支付
-      final result = await ApiService.createEscrowPayment(
-        tripId: widget.tripId,
-        amountSui: widget.amountSui,
-        driverWallet: widget.driverWallet,
-      );
-
-      if (!mounted) return;
-
-      if (result['success'] == true) {
-        _transactionDigest = result['tx_hash'] ?? result['escrow_id'];
-        setState(() {
-          _statusMessage = '交易已提交到鏈上';
-        });
-      } else {
-        throw Exception(result['error'] ?? '提交失敗');
+    // 優先：非託管 zkLogin 付款（乘客本人簽名，符合合約 passenger = sender）。
+    // 需已用 zkLogin 登入且 Enoki 贊助就緒；否則落到後端 operator 代簽後備。
+    if (widget.driverWallet != null && widget.driverWallet!.isNotEmpty) {
+      try {
+        final amountMist = (widget.amountSui * 1000000000).round();
+        final zk = await ZkLoginPaymentService.instance.payLockPayment(
+          tripId: widget.tripId,
+          amountMist: amountMist,
+          driver: widget.driverWallet!,
+        );
+        if (zk.success) {
+          if (!mounted) return;
+          _transactionDigest = zk.digest;
+          _escrowObjectId = zk.escrowObjectId;
+          setState(() => _statusMessage = '交易已上鏈（非託管）');
+          return;
+        }
+        print('⚠️ zkLogin 付款失敗，改用後備路徑: ${zk.error}');
+      } catch (e) {
+        print('⚠️ zkLogin 付款例外，改用後備路徑: $e');
       }
-    } catch (e) {
-      if (!mounted) return;
+    }
 
-      // 如果真實調用失敗，使用模擬模式
-      print('⚠️ 真實支付失敗，使用模擬模式: $e');
-      _transactionDigest = _generateMockHash('txsimulated');
+    // 後備：後端 operator 代簽（僅在 zkLogin 不可用時）。
+    // 失敗即明確拋錯 → _failPayment，不偽造交易 hash（遵守 CLAUDE.md）。
+    final result = await ApiService.createEscrowPayment(
+      tripId: widget.tripId,
+      amountSui: widget.amountSui,
+      driverWallet: widget.driverWallet,
+    );
 
-      setState(() {
-        _statusMessage = '交易已提交（模擬模式）';
-      });
+    if (!mounted) return;
+
+    if (result['success'] == true) {
+      _transactionDigest = result['tx_hash'] ?? result['escrow_id'];
+      _escrowObjectId = result['escrow_id'] ?? result['escrow_object_id'];
+      setState(() => _statusMessage = '交易已提交到鏈上');
+    } else {
+      throw Exception(result['error'] ?? '付款失敗（zkLogin 與後備代簽皆未成功）');
     }
   }
 

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 import 'services/api_service.dart';
 import 'session_manager.dart';
-import 'widgets/payment_dialog.dart';
 import 'widgets/one_click_payment_dialog.dart';
 
 class PaymentPage extends StatefulWidget {

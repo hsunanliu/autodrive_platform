@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'services/api_service.dart';
+import 'services/zklogin_service.dart';
 import 'session_manager.dart';
 
 class LoginPage extends StatefulWidget {
@@ -124,6 +125,34 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  // zkLogin 非託管登入（Google，免助記詞/免私鑰保管）
+  Future<void> _handleZkLogin() async {
+    setState(() {
+      isLoading = true;
+      message = '';
+    });
+    try {
+      final session =
+          await ZkLoginService.instance.loginWithGoogle(userType: widget.role);
+      ApiService.setToken(session.accessToken);
+      if (!mounted) return;
+      setState(() => message = '登入成功');
+      Navigator.pushReplacementNamed(
+        context,
+        session.role == 'driver' ? '/driver' : '/passenger',
+        arguments: {'session': session},
+      );
+    } on ZkLoginException catch (e) {
+      if (!mounted) return;
+      setState(() => message = '❌ ${e.message}');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => message = '❌ zkLogin 失敗：$e');
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
   void _goToRegisterPage() {
     Navigator.pushNamed(
       context,
@@ -206,6 +235,37 @@ class _LoginPageState extends State<LoginPage> {
                     fontSize: 16,
                   ),
                 ),
+              const SizedBox(height: 24),
+              Row(
+                children: const [
+                  Expanded(child: Divider(color: Color(0xFF404040))),
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12),
+                    child: Text('或', style: TextStyle(color: Colors.grey)),
+                  ),
+                  Expanded(child: Divider(color: Color(0xFF404040))),
+                ],
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                height: 55,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white,
+                    side: const BorderSide(color: Color(0xFF404040)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  onPressed: isLoading ? null : _handleZkLogin,
+                  icon: const Icon(Icons.login, color: Color(0xFF1DB954)),
+                  label: const Text(
+                    '用 Google 登入（免助記詞）',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
               const SizedBox(height: 30),
               TextButton(
                 onPressed: _goToRegisterPage,

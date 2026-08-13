@@ -9,7 +9,9 @@ import '../services/google_directions_service.dart';
 import '../services/websocket_service.dart';
 import '../services/trip_simulation_service.dart';
 import '../services/map_http_client.dart';
+import '../services/zklogin_action_service.dart';
 import '../session_manager.dart';
+import '../theme/app_theme.dart';
 
 class TripInProgressPage extends StatefulWidget {
   const TripInProgressPage({
@@ -81,8 +83,13 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
   }
 
   /// 設置 WebSocket 監聽支付完成事件
-  void _setupWebSocket() {
+  void _setupWebSocket() async {
     bool _hasJoinedRoom = false; // 標記是否已成功加入房間
+
+    // 先連接 WebSocket
+    print('🔌 車主端：正在連接 WebSocket...');
+    await _ws.connect();
+    print('🔌 車主端：WebSocket 連接已初始化，isConnected=${_ws.isConnected}');
 
     // 監聽加入房間確認
     _ws.on('joined_trip', (data) {
@@ -377,9 +384,10 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
     final totalPoints = points.length;
     final durationSeconds = _directions!.durationSeconds;
 
-    // 🚀 加速模擬：設定速度倍數（例如 10 倍速）
-    const speedMultiplier = 3.0; // 3倍速
-    final intervalMs = (durationSeconds * 1000 / totalPoints / speedMultiplier).round();
+    // 🚀 加速模擬：設定速度倍數
+    const speedMultiplier = 1.5; // 1.5倍速
+    int intervalMs = (durationSeconds * 1000 / totalPoints / speedMultiplier).round();
+    intervalMs = intervalMs.clamp(200, 1000); // 限制在 200-1000ms 之間，更自然的速度
 
     // 檢查是否已有此行程的模擬在運行
     if (_simulationService.isSimulatingTrip(widget.tripId)) {
@@ -508,6 +516,9 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
       if (result['success'] == true) {
         _startSimulation();
       }
+    } else if (newStatus == 'in_progress') {
+      // 司機開始行程（picked_up → in_progress）
+      result = await ApiService.startTrip(widget.tripId);
     } else {
       result = {'success': false, 'error': '未知狀態'};
     }
@@ -776,7 +787,7 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
       children: [
         TileLayer(
           urlTemplate:
-              'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=pk.eyJ1IjoiaHkxaWlpIiwiYSI6ImNtZW4wcHdraDB3a3Mya3Nlc29mNGY3ZHAifQ.c1EtA8uDOpR7Q2-uPVJSaA',
+              'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=MAPBOX_TOKEN_REMOVED',
           userAgentPackageName: 'com.autodrive.driver',
           // 使用默認的 NetworkTileProvider，不傳遞 httpClient
         ),
@@ -919,7 +930,7 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 狀態
+        // 狀態（含 disputed 凍結顯示，用設計系統 StatusPill）
         Row(
           children: [
             const Text(
@@ -927,24 +938,11 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
               style: TextStyle(color: Colors.white70, fontSize: 14),
             ),
             const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: _getStatusColor(),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                _getStatusText(),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
+            StatusPill.trip(_status),
           ],
         ),
         const SizedBox(height: 8),
-        // 支付狀態
+        // 支付狀態：優先用後端 payment_status enum，缺則以 escrow 是否存在回推
         Row(
           children: [
             const Text(
@@ -952,20 +950,9 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
               style: TextStyle(color: Colors.white70, fontSize: 14),
             ),
             const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: hasEscrow ? Colors.green : Colors.orange,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                hasEscrow ? '✅ 已支付' : '⏳ 待支付',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 12,
-                ),
-              ),
+            StatusPill.payment(
+              (_tripData?['payment_status'] as String?) ??
+                  (hasEscrow ? 'locked' : 'pending'),
             ),
           ],
         ),
@@ -1020,6 +1007,72 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
     );
   }
 
+  // Phase 6：回報爭議（zkLogin 簽 raise_dispute → 凍結 escrow → 回報 dispute 物件）
+  Future<void> _raiseDispute() async {
+    final escrowId = _tripData?['escrow_object_id'] as String?;
+    if (escrowId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('此行程尚無託管付款，無法發起爭議')),
+      );
+      return;
+    }
+    final reasonCtrl = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('回報爭議'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('發起爭議會凍結此筆託管款項，待平台仲裁後才會放款/退款。'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: reasonCtrl,
+              maxLines: 3,
+              decoration: const InputDecoration(hintText: '請描述爭議原因（至少 5 字）'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+          ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('簽署並凍結')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final reason = reasonCtrl.text.trim();
+    if (reason.length < 5) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('爭議原因太短')),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    final res = await ZkLoginActionService.instance.raiseDispute(
+      escrowObjectId: escrowId,
+      reason: reason,
+    );
+    if (!mounted) return;
+
+    if (res.success && res.objectId != null) {
+      await ApiService.reportDisputeObject(tripId: widget.tripId, disputeObjectId: res.objectId!);
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _status = 'disputed';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('⚠️ 已發起爭議，款項已凍結，等待平台仲裁')),
+      );
+    } else {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('發起爭議失敗：${res.error}')),
+      );
+    }
+  }
+
   Widget _buildActionButton() {
     if (_isLoading) {
       return const CircularProgressIndicator();
@@ -1040,9 +1093,10 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
         break;
       case 'picked_up':
         if (hasEscrow) {
-          buttonText = '完成行程並收款';
-          onPressed = _completeTrip;
-          buttonColor = Colors.green;
+          // 已上車且已付款 → 開始行程（進入 in_progress，讓該狀態真正被使用）
+          buttonText = '開始行程';
+          onPressed = () => _updateTripStatus('in_progress');
+          buttonColor = const Color(0xFF1DB954);
         } else {
           buttonText = '等待乘客支付';
           onPressed = null;
@@ -1059,6 +1113,22 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
           onPressed = null;
           buttonColor = Colors.grey;
         }
+        break;
+      case 'disputed':
+        // 爭議中：escrow 已凍結，任何結算動作停用，等 admin 仲裁
+        buttonText = '爭議處理中（已凍結）';
+        onPressed = null;
+        buttonColor = AppColors.warning;
+        break;
+      case 'completed':
+        buttonText = '行程已完成';
+        onPressed = null;
+        buttonColor = AppColors.success;
+        break;
+      case 'cancelled':
+        buttonText = '行程已取消';
+        onPressed = null;
+        buttonColor = Colors.grey;
         break;
       default:
         buttonText = '未知狀態';
@@ -1112,8 +1182,10 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
             ),
           ),
         ),
-        // 取消行程按鈕（行程未完成時顯示）
-        if (_status != 'completed' && _status != 'cancelled') ...[
+        // 取消行程按鈕（未完成/未取消/未爭議時才顯示；爭議中 escrow 已凍結不可取消）
+        if (_status != 'completed' &&
+            _status != 'cancelled' &&
+            _status != 'disputed') ...[
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
@@ -1132,35 +1204,33 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
             ),
           ),
         ],
+        // Phase 6：回報爭議（已付款、尚未爭議/取消時可發起，凍結託管待仲裁）
+        if (hasEscrow &&
+            _status != 'disputed' &&
+            _status != 'cancelled' &&
+            (_status == 'picked_up' ||
+                _status == 'in_progress' ||
+                _status == 'completed')) ...[
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _raiseDispute,
+              icon: const Icon(Icons.gavel, size: 20),
+              label: const Text('回報爭議'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.warning,
+                side: const BorderSide(color: AppColors.warning),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
 
-  Color _getStatusColor() {
-    switch (_status) {
-      case 'accepted':
-        return Colors.orange;
-      case 'picked_up':
-        return Colors.blue;
-      case 'in_progress':
-        return Colors.green;
-      default:
-        return Colors.grey;
-    }
-  }
-
-  String _getStatusText() {
-    switch (_status) {
-      case 'accepted':
-        return '等待接送';
-      case 'picked_up':
-        return '行程進行中';
-      case 'in_progress':
-        return '行程進行中';
-      case 'completed':
-        return '已完成';
-      default:
-        return '未知';
-    }
-  }
 }

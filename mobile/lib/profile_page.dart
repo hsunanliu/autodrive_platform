@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'driver_earnings_page.dart';
+import 'pages/identity_verification_page.dart';
 import 'services/api_service.dart';
 import 'session_manager.dart';
 
@@ -192,6 +193,13 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
+  void _openIdentityVerification() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const IdentityVerificationPage()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -266,6 +274,17 @@ class _ProfilePageState extends State<ProfilePage> {
           value: profile['user_type'] ?? session?.role ?? '--',
         ),
         const SizedBox(height: 24),
+        // 身份驗證按鈕
+        ElevatedButton.icon(
+          onPressed: _openIdentityVerification,
+          icon: const Icon(Icons.verified_user, color: Colors.white),
+          label: const Text('身份驗證', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blue.shade700,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+          ),
+        ),
+        const SizedBox(height: 12),
         if ((profile['user_type'] ?? session?.role) == 'driver' || (profile['user_type'] ?? session?.role) == 'both')
           ElevatedButton.icon(
             onPressed: _openEarnings,

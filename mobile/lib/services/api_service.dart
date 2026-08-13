@@ -163,6 +163,128 @@ class ApiService {
     });
   }
 
+  // ========== zkLogin（非託管登入，Enoki）==========
+
+  /// 建立 zkLogin nonce（Flutter 拿去做 Google OAuth）
+  static Future<Map<String, dynamic>> zkLoginNonce({
+    required String ephemeralPublicKey,
+    int additionalEpochs = 2,
+  }) => post('/auth/zklogin/nonce', {
+        'ephemeral_public_key': ephemeralPublicKey,
+        'additional_epochs': additionalEpochs,
+      });
+
+  /// 用 OAuth JWT 完成 zkLogin 登入 → 取回 app token + zkLogin 位址
+  static Future<Map<String, dynamic>> zkLoginLogin({
+    required String jwt,
+    String userType = 'passenger',
+  }) => post('/auth/zklogin/login', {'jwt': jwt, 'user_type': userType});
+
+  /// 產生 ZK proof（簽交易前置）
+  static Future<Map<String, dynamic>> zkLoginZkp({
+    required String jwt,
+    required String ephemeralPublicKey,
+    required int maxEpoch,
+    required String randomness,
+  }) => post('/auth/zklogin/zkp', {
+        'jwt': jwt,
+        'ephemeral_public_key': ephemeralPublicKey,
+        'max_epoch': maxEpoch,
+        'randomness': randomness,
+      });
+
+  // ========== 非託管付款（zkLogin + Enoki 贊助）==========
+
+  /// 組交易 + 請 Enoki 贊助 → 回 {bytes, digest}（bytes 給前端用臨時金鑰簽）
+  static Future<Map<String, dynamic>> preparePayment({
+    required int tripId,
+    required int amountMist,
+    required String driver,
+    String? platform,
+  }) => post('/payments/zklogin/prepare', {
+        'trip_id': tripId,
+        'amount_mist': amountMist,
+        'driver': driver,
+        if (platform != null) 'platform': platform,
+      });
+
+  /// 送出乘客簽好的贊助交易 → 回 {digest, escrow_object_id}
+  static Future<Map<String, dynamic>> executePayment({
+    required String digest,
+    required String signature,
+  }) => post('/payments/zklogin/execute', {
+        'digest': digest,
+        'signature': signature,
+      });
+
+  // ========== 非託管委託（Phase 5）/ 爭議（Phase 6）zkLogin 贊助 ==========
+
+  static Future<Map<String, dynamic>> delegatePrepare({
+    required int maxSpendMist,
+    required int dailyLimitMist,
+    required int validForMs,
+    int? allowedActions,
+  }) => post('/agent/zklogin/delegate/prepare', {
+        'max_spend_mist': maxSpendMist,
+        'daily_limit_mist': dailyLimitMist,
+        'valid_for_ms': validForMs,
+        if (allowedActions != null) 'allowed_actions': allowedActions,
+      });
+
+  static Future<Map<String, dynamic>> delegateExecute({
+    required String digest,
+    required String signature,
+  }) => post('/agent/zklogin/delegate/execute', {'digest': digest, 'signature': signature});
+
+  static Future<Map<String, dynamic>> disputePrepare({
+    required String escrowObjectId,
+    required String reason,
+  }) => post('/disputes/zklogin/prepare', {
+        'escrow_object_id': escrowObjectId,
+        'reason': reason,
+      });
+
+  static Future<Map<String, dynamic>> disputeExecute({
+    required String digest,
+    required String signature,
+  }) => post('/disputes/zklogin/execute', {'digest': digest, 'signature': signature});
+
+  // ========== 行程狀態機補充 ==========
+
+  /// 司機開始行程（picked_up → in_progress）
+  static Future<Map<String, dynamic>> startTrip(int tripId) =>
+      put('/trips/$tripId/start', {});
+
+  // ========== 爭議 ==========
+
+  /// 乘客/司機發起爭議（回傳需簽的 raise_dispute 參數）
+  static Future<Map<String, dynamic>> raiseDispute({
+    required int tripId,
+    required String reason,
+    String? disputeObjectId,
+  }) => post('/trips/$tripId/dispute', {
+        'reason': reason,
+        if (disputeObjectId != null) 'dispute_object_id': disputeObjectId,
+      });
+
+  /// 簽完 raise_dispute 後回報鏈上 Dispute 物件 ID
+  static Future<Map<String, dynamic>> reportDisputeObject({
+    required int tripId,
+    required String disputeObjectId,
+  }) => post('/trips/$tripId/dispute/report', {'dispute_object_id': disputeObjectId});
+
+  // ========== Agent 委託（OperatorCap）==========
+
+  /// 回報使用者簽發的 OperatorCap
+  static Future<Map<String, dynamic>> recordDelegation(String capObjectId) =>
+      post('/agent/delegation', {'cap_object_id': capObjectId});
+
+  /// 查詢目前有效委託
+  static Future<Map<String, dynamic>> getDelegation() => get('/agent/delegation');
+
+  /// 撤銷委託
+  static Future<Map<String, dynamic>> revokeDelegation() => delete('/agent/delegation');
+
   // ========== 用戶相關 API ==========
 
   // 用戶註冊
@@ -670,29 +792,6 @@ class ApiService {
     });
   }
 
-  // ========== 退款相關 ==========
-
-  /// 創建退款請求（乘客端）
-  static Future<Map<String, dynamic>> createRefundRequest({
-    required int tripId,
-    required String reason,
-    required double refundAmountSui,
-  }) async {
-    print('📮 創建退款請求:');
-    print('  行程 ID: $tripId');
-    print('  退款金額: $refundAmountSui SUI');
-    print('  退款原因: $reason');
-
-    return _handleRequest((client) {
-      return client.post(
-        Uri.parse('$baseUrl/refunds/create'),
-        headers: {..._headers, 'Content-Type': 'application/x-www-form-urlencoded'},
-        body: {
-          'trip_id': tripId.toString(),
-          'reason': reason,
-          'refund_amount_sui': refundAmountSui.toString(),
-        },
-      );
-    });
-  }
+  // 退款請求統一改走 services/refund_service.dart 的 RefundService（multipart，支援佐證檔）。
+  // 原本重複的 createRefundRequest 已移除，避免雙路徑不一致。
 }

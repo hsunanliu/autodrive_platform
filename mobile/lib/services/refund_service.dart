@@ -4,10 +4,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'http_client_manager.dart';
+import '../config/app_config.dart';
 
 class RefundService {
   static final _httpClient = HttpClientManager();
-  static const String baseUrl = 'http://10.232.200.90:8000/api/v1';
+  // 統一改用 AppConfig（原本硬編碼 IP 172.20.10.14 已移除）
+  static String get baseUrl => AppConfig.backendUrl;
 
   /// 創建退款請求
   ///
@@ -49,11 +51,10 @@ class RefundService {
         request.files.add(multipartFile);
       }
 
-      // 發送請求
-      final streamedResponse = await _httpClient.executeRequest(
-        (client) => client.send(request),
-      );
-
+      // 發送 multipart 請求。MultipartRequest.send() 回傳 StreamedResponse，
+      // 與 _httpClient.executeRequest（只吃 Future<Response>）型別不相容，
+      // 故用 BaseRequest.send()（自行管理 client）再轉成 Response。
+      final streamedResponse = await request.send();
       final response = await http.Response.fromStream(streamedResponse);
 
       if (response.statusCode == 200) {

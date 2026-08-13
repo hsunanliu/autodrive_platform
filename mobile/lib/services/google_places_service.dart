@@ -56,6 +56,7 @@ class GooglePlacesService {
         headers: {
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': _apiKey,
+          ...GoogleMapsConfig.restrictionHeaders,
         },
         body: json.encode(body),
       ));
@@ -96,6 +97,7 @@ class GooglePlacesService {
           'Content-Type': 'application/json',
           'X-Goog-Api-Key': _apiKey,
           'X-Goog-FieldMask': 'id,displayName,formattedAddress,location,types',
+          ...GoogleMapsConfig.restrictionHeaders,
         },
       ));
 
@@ -137,7 +139,9 @@ class GooglePlacesService {
         'language': 'zh-TW',
       });
 
-      final response = await _httpClient.executeRequest((client) => client.get(uri));
+      final response = await _httpClient.executeRequest(
+        (client) => client.get(uri, headers: GoogleMapsConfig.restrictionHeaders),
+      );
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);

@@ -22,6 +22,8 @@ class WebSocketService {
 
   /// 初始化並連接 WebSocket（只在未連接時才建立新連接）
   Future<void> connect() async {
+    print('🔌 WebSocket.connect() 被呼叫');
+
     // ✅ 如果已經有 socket 且正在連接或已連接，直接返回
     if (_socket != null && (_socket!.connected || _isConnected)) {
       print('✅ WebSocket: 已連接，無需重複連接');
@@ -45,55 +47,84 @@ class WebSocketService {
 
     _currentToken = session.accessToken;
 
-    // 獲取 API 基礎 URL
+    // 獲取 API 基礎 URL (不含 /api/v1)
     final apiUrl = ApiService.getBaseUrl();
 
     print('🔌 WebSocket: 嘗試連接到 $apiUrl');
     print('🔑 WebSocket: Token 長度 = ${_currentToken?.length ?? 0}');
+    print('🔑 WebSocket: Token 前 50 字元 = ${_currentToken?.substring(0, _currentToken!.length > 50 ? 50 : _currentToken!.length)}...');
 
     try {
+      // 確保使用正確的 Socket.IO 路徑
+      final socketUrl = apiUrl.endsWith('/') ? apiUrl.substring(0, apiUrl.length - 1) : apiUrl;
+      print('🔌 WebSocket: Socket URL = $socketUrl');
+
+      // 使用更簡單的配置方式
       _socket = IO.io(
-        apiUrl,
-        IO.OptionBuilder()
-            .setTransports(['polling', 'websocket']) // 明確指定傳輸方式
-            .enableAutoConnect()  // 自動連接
-            .enableReconnection()
-            .setReconnectionAttempts(5)
-            .setReconnectionDelay(1000)
-            .setReconnectionDelayMax(5000)
-            // 同時使用 query 和 auth 參數以確保兼容性
-            .setQuery({'token': _currentToken})
-            .setAuth({'token': _currentToken})
-            .build(),
+        socketUrl,
+        <String, dynamic>{
+          'transports': ['websocket', 'polling'],
+          'autoConnect': false, // 手動連接
+          'reconnection': true,
+          'reconnectionAttempts': 10,
+          'reconnectionDelay': 1000,
+          'reconnectionDelayMax': 5000,
+          'timeout': 30000,
+          'query': {'token': _currentToken},
+          'auth': {'token': _currentToken},
+          'path': '/socket.io/',
+          'forceNew': true, // 強制創建新連接
+        },
       );
+
+      print('🔌 WebSocket: Socket 對象已創建');
 
       _setupSocketListeners();
 
-      print('✅ WebSocket: 初始化完成（使用 socket_io_client v3，同時發送 query 和 auth）');
+      print('🔌 WebSocket: 事件監聽器已設置，準備連接...');
+
+      // 手動觸發連接
+      _socket!.connect();
+      print('🔌 WebSocket: connect() 已調用');
+
+      // 額外檢查連接狀態
+      print('🔌 WebSocket: socket.id = ${_socket?.id}');
+      print('🔌 WebSocket: socket.connected = ${_socket?.connected}');
+      print('🔌 WebSocket: socket.disconnected = ${_socket?.disconnected}');
+
+      print('✅ WebSocket: 初始化完成');
     } catch (e) {
       print('❌ WebSocket: 初始化失敗 - $e');
       print('❌ 錯誤堆疊: ${StackTrace.current}');
     }
   }
 
-  /// 設置 Socket.IO 內建事件監聽器
+  /// 設置 Socket.IO 內建事件監聯器
   void _setupSocketListeners() {
     if (_socket == null) return;
+
+    print('🔧 WebSocket: 開始設置事件監聽器');
 
     // 連接成功
     _socket!.onConnect((_) {
       _isConnected = true;
-      print('✅ WebSocket: 已連接');
+      print('✅ WebSocket: 已連接 (onConnect 觸發)');
+      print('✅ WebSocket: socket.id = ${_socket?.id}');
       _notifyListeners('connection_status', {'connected': true});
     });
 
     // 連接失敗
     _socket!.onConnectError((error) {
-      print('❌ WebSocket: 連接錯誤 - $error');
+      print('❌ WebSocket: 連接錯誤 (onConnectError) - $error');
       print('❌ 錯誤類型: ${error.runtimeType}');
       print('❌ 錯誤詳情: ${error.toString()}');
       _isConnected = false;
       _notifyListeners('connection_status', {'connected': false, 'error': error});
+    });
+
+    // 監聽任何事件（用於 debug）
+    _socket!.onAny((event, data) {
+      print('📨 WebSocket: 收到事件 [$event] - $data');
     });
 
     // 斷開連接

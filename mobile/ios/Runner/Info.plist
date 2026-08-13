@@ -41,6 +41,13 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
@@ -55,6 +62,22 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>autodrive</string>
+			</array>
+		</dict>
+		<!-- zkLogin Google OAuth 回跳（flutter_appauth）。
+		     拿到 iOS OAuth client id 後，把下面的 scheme 換成「反向 client id」，
+		     例：client id 為 123-abc.apps.googleusercontent.com
+		         → scheme 填 com.googleusercontent.apps.123-abc
+		     並與 app_config.local.dart 的 localGoogleOAuthRedirectUrl
+		     （com.googleusercontent.apps.123-abc:/oauth2redirect）一致。 -->
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>google-oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.715290844749-5h2krmpr37da0eij2bgplbb2nneo25uo</string>
 			</array>
 		</dict>
 	</array>

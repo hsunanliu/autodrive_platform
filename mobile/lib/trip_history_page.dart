@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'services/api_service.dart';
+import 'services/refund_service.dart';
 import 'session_manager.dart';
 
 class TripHistoryPage extends StatefulWidget {
@@ -263,13 +264,23 @@ class _TripHistoryPageState extends State<TripHistoryPage> {
         return;
       }
 
-      // 提交退款請求
+      // 提交退款請求（統一走 RefundService：multipart，支援佐證檔上傳）
       setState(() => _isLoading = true);
 
-      final refundResult = await ApiService.createRefundRequest(
+      final token = _session?.accessToken;
+      if (token == null) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('請先登入後再申請退款'), backgroundColor: Colors.red),
+        );
+        return;
+      }
+
+      final refundResult = await RefundService.createRefundRequest(
         tripId: tripId,
         reason: reason,
         refundAmountSui: amount,
+        token: token,
       );
 
       if (!mounted) return;

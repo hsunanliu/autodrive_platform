@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'theme/app_theme.dart';
+import 'pages/delegation_page.dart';
 import 'package:uni_links/uni_links.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -36,53 +39,76 @@ StreamSubscription? _linkSubscription;
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 初始化 Firebase
+  // widget/framework 例外 → 明確印出（原本可能造成畫面直接掛掉）
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    debugPrint('🔴 FlutterError: ${details.exception}');
+    debugPrint('${details.stack}');
+  };
+
+  UserSession? session;
   try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-    print('✅ Firebase 初始化成功');
+    // 初始化 Firebase
+    // ⚠️ 若 apiKey 仍是佔位符（未設定真實 key），必須「跳過」而非呼叫 initializeApp：
+    //    原生 +[FIRInstallations validateAPIKey:] 會對格式不符的 key 丟 NSException → SIGABRT，
+    //    這是原生例外，下面的 Dart try/catch 攔不到，會讓整個 app 在啟動時直接閃退。
+    try {
+      final firebaseOptions = DefaultFirebaseOptions.currentPlatform;
+      if (firebaseOptions.apiKey.startsWith('AIza')) {
+        await Firebase.initializeApp(options: firebaseOptions);
+        print('✅ Firebase 初始化成功');
 
-    // 設置背景消息處理器
-    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+        // 設置背景消息處理器
+        FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
 
-    // 初始化通知服務
-    await NotificationService().initialize();
-  } catch (e) {
-    print('⚠️ Firebase 初始化失敗: $e');
-    print('   請檢查 firebase_options.dart 配置');
-  }
-
-  // 初始化 WalletConnector
-  await globalWalletConnector.initialize();
-
-  // 處理應用啟動時的 Deep Link
-  try {
-    final initialUri = await getInitialUri();
-    if (initialUri != null) {
-      print('📱 Initial Deep Link: $initialUri');
-      await globalWalletConnector.handleWalletCallback(initialUri);
+        // 初始化通知服務
+        await NotificationService().initialize();
+      } else {
+        print('⚠️ Firebase apiKey 為佔位符（${firebaseOptions.apiKey}）→ 跳過 Firebase 初始化，'
+            'app 照常啟動但暫無推播(FCM)。要啟用：從 Firebase Console 下載真實的 '
+            'GoogleService-Info.plist 放進 ios/Runner/，並用 `flutterfire configure` 更新 firebase_options.dart。');
+      }
+    } catch (e) {
+      print('⚠️ Firebase 初始化失敗: $e');
+      print('   請檢查 firebase_options.dart 配置');
     }
-  } catch (e) {
-    print('❌ Failed to get initial URI: $e');
-  }
 
-  // 監聽應用運行時的 Deep Link
-  _linkSubscription = uriLinkStream.listen((Uri? uri) {
-    if (uri != null) {
-      print('📱 Received Deep Link: $uri');
-      globalWalletConnector.handleWalletCallback(uri);
+    // 初始化 WalletConnector
+    await globalWalletConnector.initialize();
+
+    // 處理應用啟動時的 Deep Link
+    try {
+      final initialUri = await getInitialUri();
+      if (initialUri != null) {
+        print('📱 Initial Deep Link: $initialUri');
+        await globalWalletConnector.handleWalletCallback(initialUri);
+      }
+    } catch (e) {
+      print('❌ Failed to get initial URI: $e');
     }
-  }, onError: (err) {
-    print('❌ Deep link error: $err');
-  });
 
-  final session = await SessionManager.loadSession();
-  if (session != null) {
-    ApiService.setToken(session.accessToken);
-    // 如果用戶已登入，初始化 WebSocket 連接
-    await WebSocketService().connect();
+    // 監聽應用運行時的 Deep Link
+    _linkSubscription = uriLinkStream.listen((Uri? uri) {
+      if (uri != null) {
+        print('📱 Received Deep Link: $uri');
+        globalWalletConnector.handleWalletCallback(uri);
+      }
+    }, onError: (err) {
+      print('❌ Deep link error: $err');
+    });
+
+    session = await SessionManager.loadSession();
+    if (session != null) {
+      ApiService.setToken(session.accessToken);
+      // 如果用戶已登入，初始化 WebSocket 連接
+      await WebSocketService().connect();
+    }
+  } catch (e, s) {
+    // 任何啟動階段的未捕捉例外 → 印出來，而非靜默閃退；仍嘗試啟動 UI
+    print('🔴🔴 啟動未捕捉例外: $e');
+    print('$s');
   }
+
   runApp(ProjectDappApp(initialSession: session));
 }
 
@@ -96,38 +122,23 @@ class ProjectDappApp extends StatelessWidget {
     return MaterialApp(
       title: 'Decentralized Ride App',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF121212),
-        primaryColor: const Color(0xFF1DB954),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.black,
-          foregroundColor: Colors.white,
-          elevation: 2,
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF1DB954),
-            foregroundColor: Colors.black,
-            textStyle: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-          ),
-        ),
-        textTheme: const TextTheme(
-          bodyMedium: TextStyle(color: Colors.white),
-          bodyLarge: TextStyle(color: Colors.white),
-          titleLarge: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
+      // 本地化設定
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('zh', 'TW'),
+        Locale('zh', 'CN'),
+        Locale('en', 'US'),
+      ],
+      locale: const Locale('zh', 'TW'),
+      theme: AppTheme.dark(),
       home: _buildInitialHome(),
       routes: {
         '/role_select': (context) => const RoleSelectPage(),
+        '/delegation': (context) => const DelegationPage(),
         '/login': (context) {
           final args =
               ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>? ?? {};

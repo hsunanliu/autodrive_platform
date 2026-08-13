@@ -60,7 +60,10 @@ class _StreetViewImageState extends State<StreetViewImage> {
         '&key=$apiKey';
 
     try {
-      final response = await http.get(Uri.parse(metadataUrl));
+      final response = await http.get(
+        Uri.parse(metadataUrl),
+        headers: GoogleMapsConfig.restrictionHeaders,
+      );
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['status'] == 'OK' && data['pano_id'] != null) {
@@ -148,6 +151,7 @@ class _StreetViewImageState extends State<StreetViewImage> {
             borderRadius: BorderRadius.circular(widget.borderRadius),
             child: Image.network(
               _getStreetViewUrl(),
+              headers: GoogleMapsConfig.restrictionHeaders,
               width: double.infinity,
               height: widget.height.toDouble(),
               fit: BoxFit.cover,
