@@ -85,7 +85,11 @@ module decentralized_ride::user_registry {
             ctx
         );
 
-        transfer::transfer(user_profile, user_address);
+        // 註：改為共享物件（原本 transfer 給用戶自己）。
+        // 信譽/行程數等欄位會被 can_drive/can_request_ride 用作門檻；若讓用戶擁有此物件，
+        // 用戶即可在 PTB 中自呼叫 update_reputation 自抬信譽越過門檻。改為共享後，
+        // 這些狀態變更一律由 registry.admin 把關（見下方 mutators），用戶無法自行竄改。
+        transfer::share_object(user_profile);
     }
     
     /// 更新用戶狀態 (管理員功能)
@@ -109,19 +113,35 @@ module decentralized_ride::user_registry {
         );
     }
     
-    /// 更新信譽分數 (由其他模組調用)
-    public fun update_reputation(user_profile: &mut UserProfile, new_reputation: u64) {
+    /// 更新信譽分數 - 僅平台 (registry.admin) 可呼叫。
+    public entry fun update_reputation(
+        registry: &UserRegistry,
+        user_profile: &mut UserProfile,
+        new_reputation: u64,
+        ctx: &TxContext
+    ) {
+        assert!(tx_context::sender(ctx) == registry.admin, constants::e_unauthorized());
         assert!(constants::is_valid_reputation(new_reputation), constants::e_invalid_reputation());
         user_profile.reputation = new_reputation;
     }
-    
-    /// 增加乘客行程計數
-    public fun add_ride(user_profile: &mut UserProfile) {
+
+    /// 增加乘客行程計數 - 僅平台可呼叫（應於行程完成流程中由後端/Agent 觸發）。
+    public entry fun add_ride(
+        registry: &UserRegistry,
+        user_profile: &mut UserProfile,
+        ctx: &TxContext
+    ) {
+        assert!(tx_context::sender(ctx) == registry.admin, constants::e_unauthorized());
         user_profile.total_rides = user_profile.total_rides + 1;
     }
-    
-    /// 增加司機行程計數
-    public fun add_drive(user_profile: &mut UserProfile) {
+
+    /// 增加司機行程計數 - 僅平台可呼叫。
+    public entry fun add_drive(
+        registry: &UserRegistry,
+        user_profile: &mut UserProfile,
+        ctx: &TxContext
+    ) {
+        assert!(tx_context::sender(ctx) == registry.admin, constants::e_unauthorized());
         user_profile.total_drives = user_profile.total_drives + 1;
     }
     

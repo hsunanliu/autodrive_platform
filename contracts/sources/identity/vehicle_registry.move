@@ -116,8 +116,14 @@ module decentralized_ride::vehicle_registry {
         );
     }
 
-    /// 增加行程計數 (由配對模組調用)
-    public fun add_trip(vehicle: &mut Vehicle) {
+    /// 增加行程計數 - 僅平台 (registry.admin) 可呼叫。
+    /// 原本是無把關的 public fun，車主可自呼叫灌水 total_trips；改為需 admin 授權。
+    public entry fun add_trip(
+        registry: &VehicleRegistry,
+        vehicle: &mut Vehicle,
+        ctx: &TxContext
+    ) {
+        assert!(tx_context::sender(ctx) == registry.admin, constants::e_unauthorized());
         vehicle.total_trips = vehicle.total_trips + 1;
     }
 

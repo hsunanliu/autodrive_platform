@@ -126,53 +126,10 @@ module autodrive::refund_module_v2 {
         balance::join(&mut pool.balance, coin_balance);
     }
 
-    /// 用戶提交退款請求到池（用於自動執行）
-    public entry fun submit_for_auto_refund(
-        request: RefundRequest,
-        pool: &mut RefundPoolV2,
-        ctx: &mut TxContext
-    ) {
-        let RefundRequest {
-            id,
-            trip_id,
-            requester,
-            original_amount: _,
-            refund_amount,
-            reason: _,
-            status,
-            created_at: _,
-        } = request;
-
-        // 驗證狀態
-        assert!(status == STATUS_PENDING, E_INVALID_STATUS);
-
-        // 檢查退款池餘額
-        let pool_balance = balance::value(&pool.balance);
-        assert!(pool_balance >= refund_amount, E_INSUFFICIENT_BALANCE);
-
-        // 從退款池提取資金
-        let refund_balance = balance::split(&mut pool.balance, refund_amount);
-        let refund_coin = coin::from_balance(refund_balance, ctx);
-
-        // 直接轉帳給請求者
-        transfer::public_transfer(refund_coin, requester);
-
-        // 更新統計
-        pool.total_refunded = pool.total_refunded + refund_amount;
-
-        // 發出退款完成事件
-        let refund_id = object::uid_to_address(&id);
-        event::emit(RefundEvent {
-            refund_id,
-            trip_id,
-            requester,
-            amount: refund_amount,
-            status: STATUS_COMPLETED,
-        });
-
-        // 刪除請求對象
-        object::delete(id);
-    }
+    // 註：舊版的 `submit_for_auto_refund` 已移除。
+    // 該函式沒有任何 Capability 或 sender 檢查，任何人都能建立一筆 refund_amount = 池餘額
+    // 的請求後直接把整個共享退款池掏空。所有出金一律改走下方 `approve_and_execute`
+    // （需 `&RefundCapability`，僅平台持有），由平台在鏈下審核退款正當性後執行。
 
     /// 平台批准並執行退款（需要 RefundCapability）
     public entry fun approve_and_execute(
@@ -223,6 +180,38 @@ module autodrive::refund_module_v2 {
         object::delete(id);
     }
 
+    /// 平台直接從退款池退款給指定收件者（admin 驅動路徑，免 per-request 物件）。
+    /// 需 RefundCapability（僅平台持有），供後端在管理員核准退款時直接執行——
+    /// 不必先在鏈上建立 RefundRequest 物件（那需要乘客自簽、且 owned 物件 admin 無法消費）。
+    public entry fun admin_refund_from_pool(
+        cap: &RefundCapability,
+        pool: &mut RefundPoolV2,
+        recipient: address,
+        amount: u64,
+        trip_id: u64,
+        ctx: &mut TxContext
+    ) {
+        // cap 與 pool 必須同屬一個平台
+        assert!(cap.platform_address == pool.platform_address, E_NOT_AUTHORIZED);
+
+        let pool_balance = balance::value(&pool.balance);
+        assert!(pool_balance >= amount, E_INSUFFICIENT_BALANCE);
+
+        let refund_balance = balance::split(&mut pool.balance, amount);
+        let refund_coin = coin::from_balance(refund_balance, ctx);
+        transfer::public_transfer(refund_coin, recipient);
+
+        pool.total_refunded = pool.total_refunded + amount;
+
+        event::emit(RefundEvent {
+            refund_id: object::uid_to_address(&pool.id),
+            trip_id,
+            requester: recipient,
+            amount,
+            status: STATUS_COMPLETED,
+        });
+    }
+
     /// 查詢退款池餘額
     public fun get_pool_balance(pool: &RefundPoolV2): u64 {
         balance::value(&pool.balance)
@@ -231,5 +220,10 @@ module autodrive::refund_module_v2 {
     /// 查詢總退款金額
     public fun get_total_refunded(pool: &RefundPoolV2): u64 {
         pool.total_refunded
+    }
+
+    #[test_only]
+    public fun init_for_testing(ctx: &mut TxContext) {
+        init(ctx);
     }
 }
