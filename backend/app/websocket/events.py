@@ -180,6 +180,10 @@ def register_socketio_events(sio: socketio.AsyncServer, manager: ConnectionManag
             await sio.emit("error", {"message": "位置資料不完整"}, room=sid)
             return
 
+        # 累積軌跡 breadcrumb（行程結束時上傳 Walrus，見 trajectory_service）
+        from app.services.trajectory_service import trajectory_service
+        trajectory_service.record(trip_id, lat, lng, timestamp)
+
         # 廣播位置更新到行程房間（乘客會收到）
         room_name = f"trip_{trip_id}"
         await manager.emit_to_room(

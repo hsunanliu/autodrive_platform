@@ -34,15 +34,37 @@ class User(Base):
     )
     
     did_identifier = Column(
-        String(255), 
-        unique=True, 
+        String(255),
+        unique=True,
         nullable=True,
-        comment="去中心化身份標識符（DID）"
+        comment="去中心化身份標識符（DID）- 別名：did"
     )
-    
+
+    # DID 文檔（JSON格式存儲）
+    did_document = Column(
+        Text,
+        nullable=True,
+        comment="DID 文檔（JSON格式，包含驗證方法等）"
+    )
+
+    # 憑證驗證狀態
+    age_verified = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+        comment="年齡驗證狀態（通過 ZKP 驗證）"
+    )
+
+    license_verified = Column(
+        Boolean,
+        default=False,
+        nullable=False,
+        comment="駕照驗證狀態（通過 ZKP 驗證，僅司機）"
+    )
+
     blockchain_object_id = Column(
-        String(66), 
-        unique=True, 
+        String(66),
+        unique=True,
         nullable=True,
         comment="智能合約中的 UserProfile 對象ID"
     )
@@ -227,6 +249,16 @@ class User(Base):
     
     # === 業務邏輯方法 ===
     
+    @property
+    def did(self) -> str:
+        """DID 別名（方便訪問 did_identifier）"""
+        return self.did_identifier
+
+    @did.setter
+    def did(self, value: str):
+        """設置 DID"""
+        self.did_identifier = value
+
     @property
     def total_rides(self) -> int:
         """總乘車次數（乘客 + 司機）"""

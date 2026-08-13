@@ -4,7 +4,7 @@ FROM python:3.11-slim
 # 設定工作目錄
 WORKDIR /app
 
-# 安裝系統依賴（Sui SDK 需要）
+# 安裝系統依賴（Sui SDK 和 Node.js 需要）
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -13,7 +13,16 @@ RUN apt-get update && apt-get install -y \
     libssl-dev \
     curl \
     git \
+    gnupg \
     && rm -rf /var/lib/apt/lists/*
+
+# 安裝 Node.js 20 (用於 snarkjs ZKP 驗證)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安裝 snarkjs 全局套件
+RUN npm install -g snarkjs
 
 # 升級 pip
 RUN pip install --upgrade pip

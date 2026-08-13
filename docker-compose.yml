@@ -82,7 +82,23 @@ services:
     depends_on:
       - backend
 
+  # 6. ZKP Builder 服務 (用於編譯 Circom 電路)
+  zkp-builder:
+    build:
+      context: ./zkp
+      dockerfile: Dockerfile
+    platform: linux/amd64
+    volumes:
+      - ./zkp/circuits:/zkp/circuits
+      - ./zkp/scripts:/zkp/scripts
+      - zkp_build:/zkp/build
+      - zkp_keys:/zkp/keys
+    profiles:
+      - zkp  # 只有使用 --profile zkp 時才啟動
+
 # 定義 Docker 的具名磁碟區 (Named Volumes)
 volumes:
   postgres_data:
   ipfs_data:
+  zkp_build:
+  zkp_keys:

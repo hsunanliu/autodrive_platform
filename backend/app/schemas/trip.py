@@ -18,6 +18,16 @@ class TripStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+    DISPUTED = "disputed"
+
+
+class PaymentStatus(str, Enum):
+    """支付狀態（單一事實來源，問題 8）。生命週期：pending → locked → released/refunded；失敗為 failed。"""
+    PENDING = "pending"      # 尚未付款
+    LOCKED = "locked"        # 車資已鎖入託管（原本混用的 confirmed/completed 統一為此）
+    RELEASED = "released"    # 已釋放給司機（行程完成/判司機）
+    REFUNDED = "refunded"    # 已退款給乘客
+    FAILED = "failed"        # 金流失敗
 
 
 class WaypointCreate(BaseModel):

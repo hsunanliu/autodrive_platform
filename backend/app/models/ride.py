@@ -189,7 +189,7 @@ class Trip(Base):
         String(20),
         default="pending",
         nullable=False,
-        comment="支付狀態：pending, completed, failed"
+        comment="支付狀態（單一 enum，見 schemas.trip.PaymentStatus）：pending, locked, released, refunded, failed"
     )
     
     payment_tx_hash = Column(
@@ -209,13 +209,19 @@ class Trip(Base):
         nullable=True,
         comment="區塊鏈交易ID"
     )
-    
+
+    dispute_object_id = Column(
+        String(66),
+        nullable=True,
+        comment="鏈上 Dispute 物件 ID（爭議 raise 後由行動端回報，供仲裁 resolve 使用）"
+    )
+
     # === 狀態管理 ===
     status = Column(
         String(20),
         default="requested",
         nullable=False,
-        comment="行程狀態：requested, matched, picked_up, in_progress, completed, cancelled"
+        comment="行程狀態：requested, matched, picked_up, in_progress, completed, cancelled, disputed"
     )
     
     cancellation_reason = Column(
@@ -282,7 +288,7 @@ class Trip(Base):
     # === 約束條件 ===
     __table_args__ = (
         CheckConstraint(
-            "status IN ('requested', 'matched', 'accepted', 'picked_up', 'in_progress', 'completed', 'cancelled')",
+            "status IN ('requested', 'matched', 'accepted', 'picked_up', 'in_progress', 'completed', 'cancelled', 'disputed')",
             name='valid_trip_status'
         ),
         CheckConstraint(

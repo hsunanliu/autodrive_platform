@@ -397,7 +397,7 @@ class TripService:
         # 4. 保存託管對象ID和交易哈希
         trip.escrow_object_id = escrow_object_id
         trip.blockchain_tx_id = tx_hash
-        trip.payment_status = "confirmed"
+        trip.payment_status = "locked"
 
         await self.db.commit()
 
@@ -431,6 +431,24 @@ class TripService:
 
         logger.info(f"✅ 乘客已確認上車: trip {trip_id}, passenger {passenger_id}")
 
+        return await self._build_trip_response(trip)
+
+    async def start_trip(self, trip_id: int, driver_id: int) -> TripResponse:
+        """
+        司機開始行程（picked_up → in_progress）。
+        讓 in_progress 成為真正被使用的狀態（問題 7），而非死狀態。
+        """
+        trip = await self._get_trip_by_id(trip_id)
+        if not trip:
+            raise ValueError("行程不存在")
+        if trip.driver_id != driver_id:
+            raise ValueError("您不是此行程的司機")
+        if trip.status != TripStatus.PICKED_UP:
+            raise ValueError("行程狀態不正確，需為 picked_up，當前為: " + trip.status)
+
+        trip.status = TripStatus.IN_PROGRESS
+        await self.db.commit()
+        logger.info(f"✅ 行程開始: trip {trip_id}, driver {driver_id}")
         return await self._build_trip_response(trip)
     
     # ========================================================================
@@ -483,14 +501,26 @@ class TripService:
         # 計算司機實際收益（扣除平台費用）
         driver_earnings_mist = fare_breakdown.driver_amount * 1000  # micro SUI -> MIST
         
-        # 調用鏈上支付釋放
-        release_result = await self.escrow_service.release_payment(
-            escrow_object_id=trip.escrow_object_id,
-            driver_wallet=driver.wallet_address,
-            trip_id=trip.trip_id,
-            amount_mist=driver_earnings_mist
-        )
-        
+        # 調用鏈上支付釋放：優先走 Agent 委託（乘客的 OperatorCap → release_payment_by_agent），
+        # 無委託才退回舊路徑（依賴 operator 私鑰）。
+        from app.services.delegation_service import DelegationService
+        from app.services.agent_service import agent_service
+        passenger_cap = await DelegationService(self.db).get_active_cap(passenger.id)
+        if passenger_cap and trip.escrow_object_id:
+            logger.info(f"🤖 走 Agent 委託放款（cap={passenger_cap[:12]}…）")
+            release_result = await agent_service.release_escrow_via_agent(
+                escrow_object_id=trip.escrow_object_id,
+                operator_cap_id=passenger_cap,
+                trip_id=trip.trip_id,
+            )
+        else:
+            release_result = await self.escrow_service.release_payment(
+                escrow_object_id=trip.escrow_object_id,
+                driver_wallet=driver.wallet_address,
+                trip_id=trip.trip_id,
+                amount_mist=driver_earnings_mist
+            )
+
         if not release_result.get("success"):
             error_msg = release_result.get('error', '未知錯誤')
             logger.error(f"❌ 支付釋放失敗: {error_msg}")
@@ -533,7 +563,20 @@ class TripService:
         
         logger.info(f"✅ 行程完成: trip {trip_id}, tx {release_result.get('transaction_hash')}")
         
-        # 可選: 創建鏈上收據
+        # 行程結束：把累積的 GPS 軌跡上傳 Walrus（best-effort，失敗不影響行程完成）
+        trajectory_blob_id = ""
+        trajectory_hash = b""
+        try:
+            from app.services.trajectory_service import trajectory_service
+            traj = await trajectory_service.flush_to_walrus(trip.trip_id)
+            if traj:
+                trajectory_blob_id = traj["blob_id"]
+                trajectory_hash = traj["content_hash"]
+                logger.info(f"🛰️ 軌跡已上傳 Walrus: blob={trajectory_blob_id} 點數={traj['point_count']}")
+        except Exception as e:
+            logger.warning(f"軌跡上傳 Walrus 失敗 (不影響行程): {e}")
+
+        # 可選: 創建鏈上收據（錨定軌跡 blob_id + hash）
         receipt_result = None
         try:
             receipt_result = await self.escrow_service.create_trip_receipt(
@@ -545,7 +588,9 @@ class TripService:
                 dropoff_lat=trip.dropoff_lat,
                 dropoff_lng=trip.dropoff_lng,
                 distance_km=int(trip.distance_km * 1000),  # 轉為米
-                final_amount=fare_breakdown.total_amount
+                final_amount=fare_breakdown.total_amount,
+                trajectory_blob_id=trajectory_blob_id,
+                trajectory_hash=trajectory_hash,
             )
             logger.info(f"✅ 鏈上收據已創建: {receipt_result.get('receipt_id')}")
         except Exception as e:
@@ -587,50 +632,52 @@ class TripService:
         if trip.status in [TripStatus.COMPLETED, TripStatus.CANCELLED]:
             raise ValueError("行程已完成或已取消")
 
-        # 處理支付邏輯
+        # 乘客上車後不允許取消（只能完成行程後申請退款）
+        if cancelled_by == "passenger" and trip.status in [TripStatus.PICKED_UP, TripStatus.IN_PROGRESS]:
+            raise ValueError("行程已開始，無法取消。請完成行程後如有問題可申請退款。")
+
+        # 處理支付邏輯（優先走 Agent 委託：乘客簽發的 OperatorCap）。
+        # 金流失敗一律以 error 記錄並反映在 payment_status，不再靜默吞例外。
+        payment_result = None
         if trip.escrow_object_id:
+            from app.services.delegation_service import DelegationService
+            from app.services.agent_service import agent_service
+            passenger_cap = await DelegationService(self.db).get_active_cap(trip.user_id)
             try:
-                # 情況 1: 行程已開始 (picked_up, in_progress) - 支付給司機，不退款
+                # 情況 1: 行程已開始 (picked_up, in_progress) - 放款給司機（乘客 cap 授權 release），不退款
                 if trip.status in [TripStatus.PICKED_UP, TripStatus.IN_PROGRESS]:
-                    if trip.driver_id:
-                        driver = await self._get_user_by_id(trip.driver_id)
-
-                        # 計算應支付金額（使用預估費用）
-                        if trip.total_amount:
-                            amount_mist = int(float(trip.total_amount) * 1_000_000_000)
-                        else:
-                            # 如果沒有總金額，使用估價
-                            fare_breakdown = await self._calculate_fare(
-                                trip.distance_km,
-                                trip.estimated_duration_minutes
-                            )
-                            amount_mist = fare_breakdown.driver_amount * 1000
-
-                        # 釋放支付給司機
-                        release_result = await self.escrow_service.release_payment(
+                    if passenger_cap:
+                        payment_result = await agent_service.release_escrow_via_agent(
                             escrow_object_id=trip.escrow_object_id,
-                            driver_wallet=driver.wallet_address,
+                            operator_cap_id=passenger_cap,
                             trip_id=trip.trip_id,
-                            amount_mist=amount_mist
                         )
+                    else:
+                        payment_result = {"success": False, "error": "乘客尚未授權 OperatorCap，無法代為放款"}
+                    logger.info(f"🚗 中途取消（行程已開始）→ 放款給司機: trip {trip_id}")
 
-                        logger.info(f"✅ 中途取消，支付已釋放給司機: trip {trip_id}")
-                        logger.info(f"   原因: 行程已開始，車輛已提供服務")
-                        logger.info(f"   司機收益: {amount_mist / 1_000_000_000:.4f} SUI")
-
-                # 情況 2: 行程未開始 (accepted 但未 picked_up) - 退款給乘客
+                # 情況 2: 行程未開始 (accepted) - 退款給乘客
                 elif trip.status in [TripStatus.ACCEPTED]:
-                    canceller_wallet = await self._get_user_wallet(user_id)
-                    await self.escrow_service.refund_payment(
-                        escrow_object_id=trip.escrow_object_id,
-                        requester_wallet=canceller_wallet
-                    )
-                    logger.info(f"✅ 已觸發退款: trip {trip_id}, 由 {cancelled_by} 發起")
-                    logger.info(f"   原因: 行程尚未開始")
-                    logger.info(f"   退款接收: 乘客錢包")
+                    if passenger_cap:
+                        payment_result = await agent_service.refund_escrow_via_agent(
+                            escrow_object_id=trip.escrow_object_id,
+                            operator_cap_id=passenger_cap,
+                        )
+                    else:
+                        payment_result = {"success": False, "error": "乘客尚未授權 OperatorCap，無法代為退款"}
+                    logger.info(f"💸 取消退款（行程未開始）: trip {trip_id}, 由 {cancelled_by} 發起")
 
+                if payment_result is not None:
+                    if payment_result.get("success"):
+                        trip.blockchain_tx_id = payment_result.get("transaction_hash")
+                        trip.payment_status = "refunded" if trip.status == TripStatus.ACCEPTED else "released"
+                    else:
+                        trip.payment_status = "failed"
+                        logger.error(f"❌ 取消金流失敗 trip {trip_id}: {payment_result.get('error')}")
             except Exception as e:
-                logger.error(f"支付處理失敗: {e}")
+                trip.payment_status = "failed"
+                payment_result = {"success": False, "error": str(e)}
+                logger.error(f"❌ 取消金流異常 trip {trip_id}: {e}")
         
         # 更新狀態
         trip.status = TripStatus.CANCELLED
@@ -1010,8 +1057,10 @@ class TripService:
         應該透過背景任務定期執行（建議 5 分鐘一次）
         """
         try:
-            # 計算 15 分鐘前的時間
-            threshold_time = datetime.utcnow() - timedelta(minutes=15)
+            from datetime import timezone
+            now_utc = datetime.now(timezone.utc)
+            # 計算 15 分鐘前的時間（tz-aware，避免與 timestamptz 欄位相減時 naive/aware 衝突）
+            threshold_time = now_utc - timedelta(minutes=15)
 
             # 查詢符合條件的訂單
             stmt = select(Trip).where(
@@ -1031,8 +1080,11 @@ class TripService:
             upgraded_trip_ids = []
 
             for trip in waiting_trips:
-                # 計算實際等待時間
-                wait_minutes = int((datetime.utcnow() - trip.requested_at).total_seconds() / 60)
+                # 計算實際等待時間（把可能為 naive 的 requested_at 補成 UTC，避免相減報錯）
+                ra = trip.requested_at
+                if ra is not None and ra.tzinfo is None:
+                    ra = ra.replace(tzinfo=timezone.utc)
+                wait_minutes = int((now_utc - ra).total_seconds() / 60) if ra else 0
                 trip.actual_wait_minutes = wait_minutes
 
                 # 升級優先級（保持原價）
