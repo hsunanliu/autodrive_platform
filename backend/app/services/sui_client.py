@@ -23,27 +23,20 @@ class SuiBlockchainClient:
         self._initialize_client()
 
     def _initialize_client(self):
-        """初始化 Sui 客戶端"""
+        """初始化 Sui 客戶端。
+
+        pysui 0.65 沒有 SuiConfig.testnet()/devnet()/mainnet()；改用 user_config
+        （指定 rpc_url + 平台 operator 金鑰），與 sui_service 一致。
+        """
         try:
-            # 根據網路類型創建配置
-            if settings.SUI_NETWORK == "testnet":
-                self.config = SuiConfig.testnet()
-            elif settings.SUI_NETWORK == "devnet":
-                self.config = SuiConfig.devnet()
-            elif settings.SUI_NETWORK == "mainnet":
-                self.config = SuiConfig.mainnet()
-            else:
-                logger.warning(f"Unknown network: {settings.SUI_NETWORK}, using testnet")
-                self.config = SuiConfig.testnet()
-
-            # 如果有自定義節點 URL，覆蓋配置
-            if settings.SUI_NODE_URL:
-                self.config.rpc_url = settings.SUI_NODE_URL
-
-            # 創建同步客戶端
+            operator_key = getattr(settings, "OPERATOR_PRIVATE_KEY", "") or ""
+            prv_keys = [operator_key] if operator_key else []
+            self.config = SuiConfig.user_config(
+                rpc_url=settings.SUI_NODE_URL,
+                prv_keys=prv_keys,
+            )
             self.client = SyncClient(self.config)
-            logger.info(f"✅ Sui 客戶端初始化成功: {settings.SUI_NETWORK}")
-
+            logger.info(f"✅ Sui 客戶端初始化成功: {settings.SUI_NETWORK} ({settings.SUI_NODE_URL})")
         except Exception as e:
             logger.error(f"❌ Sui 客戶端初始化失敗: {e}")
             self.client = None

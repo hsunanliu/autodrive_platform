@@ -22,10 +22,15 @@ class DirectionsService:
     """Google Maps Directions API 服務"""
 
     def __init__(self):
-        self.api_key = os.getenv('GOOGLE_MAPS_API_KEY', '')
+        # 後端由伺服器 IP 呼叫，不帶 iOS bundle header；若前端那把 key 是「iOS App 限制」，
+        # 後端會被 REQUEST_DENIED。可另設 BACKEND_GOOGLE_MAPS_API_KEY（以伺服器 IP 限制）供後端專用；
+        # 未設則沿用 GOOGLE_MAPS_API_KEY。
+        self.api_key = os.getenv('BACKEND_GOOGLE_MAPS_API_KEY') or os.getenv('GOOGLE_MAPS_API_KEY', '')
         if not self.api_key:
-            logger.warning("⚠️ GOOGLE_MAPS_API_KEY 未設置，將使用直線路線")
+            logger.warning("⚠️ 未設置 Google Maps API key，將使用直線路線")
         self.base_url = "https://maps.googleapis.com/maps/api/directions/json"
+        # 避免每次請求都噴同一則錯誤：REQUEST_DENIED 只提醒一次
+        self._denied_warned = False
 
     async def get_route(
         self,
@@ -84,8 +89,20 @@ class DirectionsService:
 
                     data = await response.json()
 
-                    if data.get('status') != 'OK':
-                        logger.error(f"❌ Google Directions API 狀態: {data.get('status')}")
+                    status = data.get('status')
+                    if status != 'OK':
+                        if status == 'REQUEST_DENIED':
+                            # 多半是 key 被限制成 iOS App，後端（伺服器 IP）無法使用。
+                            # 這是可預期的設定情境，直線 fallback 可承接；只提醒一次避免洗版。
+                            if not self._denied_warned:
+                                logger.warning(
+                                    "⚠️ Directions REQUEST_DENIED：後端這把 key 可能被限制為 iOS App。"
+                                    "後端改用直線路線；如需真實路線，請設 BACKEND_GOOGLE_MAPS_API_KEY（伺服器 IP 限制）。"
+                                    f" 訊息：{data.get('error_message', '')}"
+                                )
+                                self._denied_warned = True
+                        else:
+                            logger.error(f"❌ Google Directions API 狀態: {status}")
                         return self._fallback_route(origin_lat, origin_lng, dest_lat, dest_lng, waypoints)
 
                     # 解析路線

@@ -155,6 +155,90 @@ class RefundServiceV2:
             await self.db.rollback()
             return {"success": False, "error": f"系統錯誤: {str(e)}"}
 
+    async def approve_and_execute_refund(
+        self,
+        refund_request_id: int,
+        admin_note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        管理員核准退款並**真正上鏈執行**（refund_module_v2::admin_refund_from_pool）。
+        成功才把 DB 標為 completed；鏈上失敗明確回報，不 mock。
+        """
+        try:
+            rr = (await self.db.execute(
+                select(RefundRequest).where(RefundRequest.id == refund_request_id)
+            )).scalar_one_or_none()
+            if not rr:
+                return {"success": False, "error": f"退款請求 {refund_request_id} 不存在"}
+            if rr.status in ("completed", "rejected"):
+                return {"success": False, "error": f"退款請求已處理（{rr.status}）"}
+
+            user = (await self.db.execute(
+                select(User).where(User.id == rr.user_id)
+            )).scalar_one_or_none()
+            if not user or not user.wallet_address:
+                return {"success": False, "error": "用戶錢包地址不存在"}
+
+            amount_sui = float(rr.approved_refund_twd or rr.requested_refund_twd or 0)
+            amount_mist = int(amount_sui * 1_000_000_000)
+            if amount_mist <= 0:
+                return {"success": False, "error": "退款金額無效"}
+
+            from app.services.sui_service import sui_service
+            chain = await sui_service.call_contract_admin_refund(
+                package_id=self.package_id,
+                cap_id=settings.REFUND_CAPABILITY_ID,
+                pool_id=self.refund_pool_id,
+                recipient=user.wallet_address,
+                amount_mist=amount_mist,
+                trip_id=rr.trip_id,
+            )
+            if not chain.get("success"):
+                return {"success": False, "error": f"鏈上退款失敗: {chain.get('error')}"}
+
+            rr.status = "completed"
+            rr.decided_at = datetime.utcnow()
+            rr.refunded_at = datetime.utcnow()
+            rr.decision_note = admin_note or "管理員核准，已鏈上退款"
+            await self.db.commit()
+
+            return {
+                "success": True,
+                "refund_request_id": refund_request_id,
+                "status": "completed",
+                "on_chain": True,
+                "transaction_hash": chain.get("transaction_hash", ""),
+            }
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"❌ 核准退款失敗: {e}")
+            await self.db.rollback()
+            return {"success": False, "error": f"系統錯誤: {str(e)}"}
+
+    async def reject_refund(
+        self,
+        refund_request_id: int,
+        admin_note: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """管理員拒絕退款（僅改 DB 狀態，不上鏈）。"""
+        try:
+            rr = (await self.db.execute(
+                select(RefundRequest).where(RefundRequest.id == refund_request_id)
+            )).scalar_one_or_none()
+            if not rr:
+                return {"success": False, "error": f"退款請求 {refund_request_id} 不存在"}
+            if rr.status in ("completed", "rejected"):
+                return {"success": False, "error": f"退款請求已處理（{rr.status}）"}
+
+            rr.status = "rejected"
+            rr.decided_at = datetime.utcnow()
+            rr.decision_note = admin_note or "管理員拒絕退款"
+            await self.db.commit()
+            return {"success": True, "refund_request_id": refund_request_id, "status": "rejected"}
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"❌ 拒絕退款失敗: {e}")
+            await self.db.rollback()
+            return {"success": False, "error": f"系統錯誤: {str(e)}"}
+
     async def _try_blockchain_refund(
         self,
         trip_id: int,

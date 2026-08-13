@@ -10,10 +10,11 @@ from typing import Optional
 import logging
 
 from app.core.database import get_async_session
+from app.core.rate_limit import rate_limit
 from app.services.refund_service_v2 import RefundServiceV2
-from app.services.ipfs_service import ipfs_service, log_ipfs_upload
 from app.api.deps import get_current_user
-from app.models import User
+from app.dependencies.admin import get_current_admin
+from app.models import User, AdminUser
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,10 @@ class RefundRejection(BaseModel):
     admin_note: str = Field(..., min_length=10, max_length=500, description="拒絕原因（至少 10 個字）")
 
 
-@router.post("/create")
+@router.post(
+    "/create",
+    dependencies=[Depends(rate_limit(times=10, seconds=300, scope="refund-create"))],
+)
 async def create_refund_request(
     trip_id: int = Form(..., description="行程 ID"),
     reason: str = Form(..., min_length=10, description="退款原因"),
@@ -88,42 +92,23 @@ async def create_refund_request(
                     detail=f"不支援的文件類型: {evidence_file.content_type}"
                 )
 
-            # 上傳到 IPFS
-            metadata = {
-                "uploaded_by": current_user.id,
-                "username": current_user.username,
-                "purpose": "refund_evidence",
-                "trip_id": trip_id,
-                "content_type": evidence_file.content_type
-            }
-
-            ipfs_result = await ipfs_service.upload_file(
-                file_content=file_content,
-                filename=evidence_file.filename or "refund_evidence",
-                metadata=metadata
-            )
-
-            if not ipfs_result['success']:
+            # 上傳到 Walrus（取代原本的單節點 IPFS）。evidence_cid 欄位改存 Walrus blob_id，
+            # evidence_hash 存內容 SHA256（供讀取時比對，確保佐證未被替換）。
+            from app.services.walrus_service import walrus_service, WalrusError
+            try:
+                walrus_result = await walrus_service.store(file_content)
+            except WalrusError as e:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"證據上傳失敗: {ipfs_result.get('error', '未知錯誤')}"
+                    detail=f"證據上傳失敗: {e}"
                 )
 
-            evidence_cid = ipfs_result['cid']
-            evidence_hash = ipfs_result['hash']
+            evidence_cid = walrus_result['blob_id']
+            evidence_hash = walrus_result['content_hash_hex']
             evidence_filename = evidence_file.filename
             evidence_content_type = evidence_file.content_type
 
-            # 記錄審計日誌
-            log_ipfs_upload(
-                cid=evidence_cid,
-                filename=evidence_filename,
-                uploaded_by=current_user.id,
-                purpose="refund_evidence",
-                related_id=trip_id
-            )
-
-            logger.info(f"✅ 退款證據已上傳到 IPFS: {evidence_cid}")
+            logger.info(f"✅ 退款證據已上傳到 Walrus: blob={evidence_cid}")
 
         # 創建並執行退款（嘗試鏈上退款）
         result = await service.create_and_execute_refund(
@@ -168,20 +153,16 @@ async def create_refund_request(
 async def approve_refund(
     refund_request_id: int,
     approval_data: RefundApproval,
-    current_user: User = Depends(get_current_user),
+    admin: AdminUser = Depends(get_current_admin),
     session: AsyncSession = Depends(get_async_session)
 ):
     """
     批准退款並執行鏈上轉帳（管理員端）
 
-    - 僅管理員可調用
+    - 僅管理員可調用（get_current_admin 驗證）
     - 退款請求必須為 pending 狀態
     - 執行鏈上退款交易
     """
-    # TODO: 添加管理員權限驗證
-    # if not current_user.is_admin:
-    #     raise HTTPException(status_code=403, detail="需要管理員權限")
-
     service = RefundServiceV2(session)
 
     try:
@@ -217,17 +198,15 @@ async def approve_refund(
 async def reject_refund(
     refund_request_id: int,
     rejection_data: RefundRejection,
-    current_user: User = Depends(get_current_user),
+    admin: AdminUser = Depends(get_current_admin),
     session: AsyncSession = Depends(get_async_session)
 ):
     """
     拒絕退款請求（管理員端）
 
-    - 僅管理員可調用
+    - 僅管理員可調用（get_current_admin 驗證）
     - 退款請求必須為 pending 狀態
     """
-    # TODO: 添加管理員權限驗證
-
     service = RefundServiceV2(session)
 
     try:

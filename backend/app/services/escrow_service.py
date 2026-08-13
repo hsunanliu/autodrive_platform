@@ -180,17 +180,19 @@ class EscrowService:
         """
         try:
             logger.info(f"💸 退款: escrow_id={escrow_object_id}, requester={requester_wallet}")
-            
-            tx_hash = self._generate_mock_tx_hash(escrow_object_id, "refund")
-            
+
+            # 不再回傳假 hash 冒充成功。鏈上退款須由 payment_escrow::refund_payment
+            # （乘客/司機簽章）或 refund_payment_by_agent（OperatorCap）執行——此串接屬 P1
+            # agent-backend（D2）。在串接完成前，明確回報「尚未上鏈」，避免帳實不符。
+            logger.warning("退款尚未串接真實鏈上交易（等待 P1 D2 OperatorCap 流程）")
             return {
-                "success": True,
-                "transaction_hash": tx_hash,
-                "status": "payment_refunded",
+                "success": False,
+                "status": "refund_requires_onchain_execution",
                 "escrow_id": escrow_object_id,
-                "recipient": requester_wallet
+                "recipient": requester_wallet,
+                "error": "鏈上退款尚未串接（payment_escrow::refund_payment / refund_payment_by_agent），請勿以此為已退款",
             }
-            
+
         except Exception as e:
             logger.error(f"退款失敗: {e}")
             return {
@@ -208,11 +210,17 @@ class EscrowService:
         dropoff_lat: float,
         dropoff_lng: float,
         distance_km: int,
-        final_amount: int
+        final_amount: int,
+        trajectory_blob_id: str = "",
+        trajectory_hash: bytes = b"",
     ) -> Dict[str, Any]:
         """
         創建鏈上收據 (可選功能)
-        
+
+        Args:
+            trajectory_blob_id: 該趟 GPS 軌跡在 Walrus 的 blob_id（可空）
+            trajectory_hash: 軌跡內容 SHA256（32 bytes，可空），與 blob_id 一起上鏈錨定
+
         Returns:
             收據創建結果
         """
@@ -250,7 +258,9 @@ class EscrowService:
                             list(pickup_hash),
                             list(dropoff_hash),
                             str(distance_km),
-                            str(final_amount)
+                            str(final_amount),
+                            list(trajectory_blob_id.encode("utf-8")),
+                            list(trajectory_hash),
                         ],
                         "gasBudget": "10000000"
                     }

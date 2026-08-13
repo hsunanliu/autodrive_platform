@@ -11,8 +11,12 @@ from typing import List, Optional
 
 from app.core.database import get_async_session
 from app.api.deps import get_current_user, require_passenger_role, require_driver_role
+from app.dependencies.admin import get_current_admin
 from app.models.user import User
+from app.models import AdminUser
 from app.services.trip_service import TripService
+from app.services.dispute_service import DisputeService
+from pydantic import BaseModel
 from app.services.sui_service import sui_service as iota_service
 from app.schemas.trip import (
     TripCreate, TripResponse, TripEstimate, TripCancelRequest,
@@ -20,6 +24,7 @@ from app.schemas.trip import (
 )
 from app.schemas.payment import WalletBalance, TransactionStatus, PaymentStatus
 from app.config import settings
+from app.core.rate_limit import rate_limit
 from app.websocket.dependencies import get_notifier
 from app.websocket.notifier import WebSocketNotifier
 from app.services.fcm_service import fcm_service
@@ -29,7 +34,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/trips", tags=["trips"])
 
-@router.post("/estimate", response_model=TripEstimate)
+@router.post(
+    "/estimate",
+    response_model=TripEstimate,
+    dependencies=[Depends(rate_limit(times=20, seconds=60, scope="estimate"))],
+)
 async def get_trip_estimate(
     pickup_lat: float = Query(..., description="上車點緯度"),
     pickup_lng: float = Query(..., description="上車點經度"),
@@ -245,6 +254,24 @@ async def pickup_passenger(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"確認上車失敗: {str(e)}"
+        )
+
+@router.put("/{trip_id}/start", response_model=TripResponse)
+async def start_trip(
+    trip_id: int,
+    db: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(require_driver_role)
+):
+    """司機開始行程（picked_up → in_progress）。"""
+    service = TripService(db)
+    try:
+        return await service.start_trip(trip_id, current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"開始行程失敗: {str(e)}"
         )
 
 @router.put("/{trip_id}/complete")
@@ -464,7 +491,10 @@ async def get_trip_details(
             detail=f"獲取行程詳情失敗: {str(e)}"
         )
 
-@router.get("/{trip_id}/route")
+@router.get(
+    "/{trip_id}/route",
+    dependencies=[Depends(rate_limit(times=30, seconds=60, scope="route"))],
+)
 async def get_trip_route(
     trip_id: int,
     db: AsyncSession = Depends(get_async_session),
@@ -764,38 +794,44 @@ async def create_escrow_payment(
         logger.info(f"   司機: {driver_wallet[:20]}...")
         logger.info(f"   乘客: {passenger_wallet[:20]}...")
 
-        # 🎭 模擬模式：生成模擬交易哈希
-        # 注意：這是為了讓用戶體驗流暢，實際支付應該由用戶手動調用智能合約
-        import hashlib
-        from datetime import datetime
+        # 模擬路徑僅在 MOCK_MODE 生效（問題 5）；正式路徑回傳乘客要簽的真實 lock_payment 參數（非託管，問題 9）
+        if settings.MOCK_MODE:
+            import hashlib
+            from datetime import datetime
+            logger.info("🎭 MOCK_MODE 模擬託管支付")
+            mock_tx_data = f"{trip_id}{amount_mist}{passenger_wallet}{datetime.utcnow().isoformat()}"
+            mock_tx_hash = "0xsimulated" + hashlib.sha256(mock_tx_data.encode()).hexdigest()[:54]
+            trip.payment_status = "pending"
+            trip.payment_tx_hash = mock_tx_hash
+            trip.escrow_object_id = mock_tx_hash
+            await db.commit()
+            return {
+                "success": True, "mode": "simulated",
+                "tx_hash": mock_tx_hash, "escrow_id": mock_tx_hash,
+                "amount_mist": amount_mist,
+                "message": "（MOCK_MODE）支付意圖已記錄",
+            }
 
-        logger.info(f"🎭 使用模擬模式創建託管支付（用戶應手動調用智能合約）")
-
-        # 生成模擬交易哈希
-        mock_tx_data = f"{trip_id}{amount_mist}{passenger_wallet}{datetime.utcnow().isoformat()}"
-        mock_tx_hash = "0xsimulated" + hashlib.sha256(mock_tx_data.encode()).hexdigest()[:54]
-        mock_escrow_id = mock_tx_hash  # 使用相同的 ID
-
-        # 更新行程的支付狀態為 pending
-        # 注意：這裡只是記錄意圖，實際的支付需要用戶手動完成
-        from app.models.ride import Trip
+        # 正式：非託管，乘客用自己的錢包簽 lock_payment（平台費由合約以 2.5% 計算，不在此傳入）
         trip.payment_status = "pending"
-        trip.payment_tx_hash = mock_tx_hash
-        trip.escrow_object_id = mock_escrow_id
         await db.commit()
-
-        logger.info(f"✅ 託管支付記錄已創建（模擬模式）: {mock_tx_hash[:20]}...")
-        logger.info(f"⚠️  用戶需要手動在錢包中調用智能合約完成真實支付")
-
         return {
             "success": True,
-            "tx_hash": mock_tx_hash,
-            "escrow_id": mock_escrow_id,
+            "mode": "onchain",
+            "on_chain_call": {
+                "package": settings.CONTRACT_PACKAGE_ID,
+                "module": "payment_escrow",
+                "function": "lock_payment",
+                "arguments": {
+                    "payment_amount_mist": amount_mist,
+                    "trip_id": trip_id,
+                    "driver": driver_wallet,
+                    "platform": settings.PLATFORM_WALLET,
+                },
+                "note": "請用錢包簽署此交易鎖定車資；簽完把 escrow_object_id 與 tx_hash 回報（verify-payment）",
+            },
             "amount_mist": amount_mist,
-            "platform_fee": platform_fee,
-            "message": "支付意圖已記錄（模擬模式）\n請在錢包中手動調用智能合約完成支付",
-            "mode": "simulated",
-            "note": "這是模擬交易，實際支付需要在錢包中手動調用智能合約"
+            "message": "請在錢包簽署 lock_payment 完成託管",
         }
 
     except HTTPException:
@@ -835,8 +871,11 @@ async def verify_trip_payment(
                 detail="無權限驗證此行程"
             )
 
-        # 檢測是否為模擬支付（開發/測試模式）
-        is_simulated = tx_hash.startswith('0xtx') or tx_hash.startswith('0xsimulated')
+        # 檢測是否為模擬支付。**只在後端明確開啟 MOCK_MODE 時**才允許，
+        # 否則任何登入用戶都能送 tx_hash=0xtx... 直接把行程標記為已付款而不上鏈驗證（免費搭車漏洞）。
+        is_simulated = settings.MOCK_MODE and (
+            tx_hash.startswith('0xtx') or tx_hash.startswith('0xsimulated')
+        )
 
         if is_simulated:
             # 模擬支付模式：直接標記為已支付，不驗證區塊鏈
@@ -844,7 +883,7 @@ async def verify_trip_payment(
 
             # 更新行程支付狀態
             from app.models.ride import Trip
-            trip.payment_status = "completed"
+            trip.payment_status = "locked"
             trip.payment_tx_hash = tx_hash
             trip.escrow_object_id = tx_hash
             await db.commit()
@@ -893,7 +932,7 @@ async def verify_trip_payment(
 
         # 驗證成功，更新行程支付狀態
         from app.models.ride import Trip
-        trip.payment_status = "completed"
+        trip.payment_status = "locked"
         trip.payment_tx_hash = tx_hash
         trip.escrow_object_id = tx_hash
         await db.commit()
@@ -918,3 +957,73 @@ async def verify_trip_payment(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"驗證支付失敗: {str(e)}"
         )
+
+
+# ============================================================
+# 爭議（Phase 4）
+# ============================================================
+
+class RaiseDisputeRequest(BaseModel):
+    reason: str
+    dispute_object_id: Optional[str] = None  # 若行動端已鏈上 raise，可一併帶入
+
+
+class ReportDisputeObjectRequest(BaseModel):
+    dispute_object_id: str
+
+
+class ResolveDisputeRequest(BaseModel):
+    ruling: int  # 1=判司機, 2=退乘客
+    admin_note: Optional[str] = None
+
+
+@router.post(
+    "/{trip_id}/dispute",
+    dependencies=[Depends(rate_limit(times=10, seconds=300, scope="dispute"))],
+)
+async def raise_dispute(
+    trip_id: int,
+    body: RaiseDisputeRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """乘客或司機發起爭議，凍結該筆託管。回傳需用錢包簽署的 raise_dispute 參數。"""
+    result = await DisputeService(db).raise_dispute(
+        trip_id=trip_id, user_id=current_user.id,
+        reason=body.reason, dispute_object_id=body.dispute_object_id,
+    )
+    if not result["success"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result["error"])
+    return result
+
+
+@router.post("/{trip_id}/dispute/report")
+async def report_dispute_object(
+    trip_id: int,
+    body: ReportDisputeObjectRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """行動端簽完 raise_dispute 後回報鏈上 Dispute 物件 ID。"""
+    result = await DisputeService(db).report_dispute_object(
+        trip_id=trip_id, user_id=current_user.id, dispute_object_id=body.dispute_object_id,
+    )
+    if not result["success"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result["error"])
+    return result
+
+
+@router.post("/{trip_id}/resolve-dispute")
+async def resolve_dispute(
+    trip_id: int,
+    body: ResolveDisputeRequest,
+    admin: AdminUser = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_async_session),
+):
+    """管理員仲裁：ruling=1 判司機（release）、2 退乘客（refund）。平台 ArbiterCap 上鏈執行。"""
+    result = await DisputeService(db).resolve_dispute(
+        trip_id=trip_id, ruling=body.ruling, admin_note=body.admin_note,
+    )
+    if not result["success"]:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result["error"])
+    return result

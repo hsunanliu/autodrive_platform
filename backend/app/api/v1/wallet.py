@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 
 from app.api.deps import get_async_session, get_current_user
+from app.core.rate_limit import rate_limit
 from app.models.user import User
 from app.services.wallet_service import wallet_service
 import logging
@@ -61,17 +62,22 @@ class BalanceResponse(BaseModel):
 # API Endpoints
 # ============================================================================
 
-@router.post("/create", response_model=WalletResponse)
+@router.post(
+    "/create",
+    response_model=WalletResponse,
+    dependencies=[Depends(rate_limit(times=5, seconds=300, scope="wallet-create"))],
+)
 async def create_wallet(
     request: CreateWalletRequest
 ):
     """
-    創建新錢包（無需認證）
-    
+    創建新錢包（無需認證，供註冊流程使用）
+
     - 創建一個新的 Sui 錢包
     - 私鑰使用用戶密碼加密
     - 返回助記詞（僅此一次，請用戶備份）
-    - 此端點用於註冊流程，不需要用戶已登入
+    - 註冊流程需在登入前呼叫，故不強制認證；改以**限流**（每 IP 5 分鐘最多 5 次）
+      防止金鑰生成濫用。
     """
     try:
         # 創建錢包

@@ -5,6 +5,7 @@
 """
 
 import logging
+import os
 from typing import Dict, Any, Optional
 from datetime import datetime
 import hashlib
@@ -39,9 +40,10 @@ class WalletService:
     @staticmethod
     def encrypt_private_key(private_key: str, password: str) -> Dict[str, str]:
         """加密私鑰"""
-        # 生成隨機 salt
-        salt = hashlib.sha256(password.encode()).digest()
-        
+        # 生成隨機 salt（每次加密都不同；原本用 sha256(password) 當 salt，
+        # 等於沒有 salt——相同密碼永遠得到相同 salt，違背 PBKDF2 加鹽的目的）
+        salt = os.urandom(16)
+
         # 派生加密密鑰
         key = WalletService._derive_key(password, salt)
         

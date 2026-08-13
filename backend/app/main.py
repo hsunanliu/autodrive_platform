@@ -6,6 +6,8 @@ import logging
 import os
 import socketio
 
+from app.config import settings
+
 # 設置日誌
 from app.core.logging_config import setup_logging
 
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 # 初始化 Socket.IO
 sio = socketio.AsyncServer(
     async_mode="asgi",
-    cors_allowed_origins="*",  # 生產環境要改
+    cors_allowed_origins=settings.cors_allow_origins_list,  # 白名單，由 CORS_ALLOW_ORIGINS 設定
     logger=True,
     engineio_logger=True,
     ping_timeout=60,  # 增加 ping 超時時間
@@ -78,10 +80,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS 設置
+# CORS 設置：白名單來源（不可與 allow_credentials=True 同時用 "*"，那會洩漏帶憑證的跨站請求）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生產環境要改
+    allow_origins=settings.cors_allow_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -114,6 +116,13 @@ from app.api.v1 import wallet as wallet_v1
 from app.api.v1 import payment_proxy
 from app.api.v1 import refunds as refunds_v1
 from app.api.v1 import ipfs as ipfs_v1
+from app.api.v1 import identity as identity_v1
+from app.api.v1 import zkp as zkp_v1
+from app.api.v1 import ratings as ratings_v1
+from app.api.v1 import agent as agent_v1
+from app.api.v1 import auth as auth_v1
+from app.api.v1 import payments_zklogin as payments_zklogin_v1
+from app.api.v1 import zklogin_actions as zklogin_actions_v1
 from app.api.v1.admin import router as admin_router
 
 app.include_router(users_v1.router, prefix="/api/v1")
@@ -123,6 +132,13 @@ app.include_router(wallet_v1.router, prefix="/api/v1/wallet", tags=["wallet"])
 app.include_router(payment_proxy.router, prefix="/api/v1/payment", tags=["payment"])
 app.include_router(refunds_v1.router, prefix="/api/v1")
 app.include_router(ipfs_v1.router, prefix="/api/v1")
+app.include_router(identity_v1.router, prefix="/api/v1/identity", tags=["identity"])
+app.include_router(zkp_v1.router, prefix="/api/v1")
+app.include_router(ratings_v1.router, prefix="/api/v1")
+app.include_router(agent_v1.router, prefix="/api/v1")
+app.include_router(auth_v1.router, prefix="/api/v1")
+app.include_router(payments_zklogin_v1.router, prefix="/api/v1")
+app.include_router(zklogin_actions_v1.router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
 
 # 掛載 Socket.IO 應用

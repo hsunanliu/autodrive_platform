@@ -510,7 +510,9 @@ class SuiService:
                 # 構建交易
                 txn = SyncTransaction(client=client)
                 
-                # 調用合約的 lock_payment 函數
+                # 調用合約的 lock_payment 函數。
+                # 平台費由合約以 PLATFORM_FEE_RATE 於鏈上計算，不再由後端傳入 platform_fee
+                # （單一事實來源，避免鏈上/鏈下不一致，威脅 T10）。
                 txn.move_call(
                     target=f"{package_id}::payment_escrow::lock_payment",
                     arguments=[
@@ -518,7 +520,6 @@ class SuiService:
                         SuiU64(trip_id),  # trip_id
                         SuiString(driver_address),  # driver
                         SuiString(platform_address),  # platform
-                        SuiU64(platform_fee_mist)  # platform_fee
                     ]
                 )
                 
@@ -665,17 +666,12 @@ class SuiService:
                     "error": "pysui SDK 未安裝，請運行: pip install pysui"
                 }
             except Exception as e:
+                # 絕不以假交易 hash 冒充成功。鏈上呼叫失敗就明確回報失敗，
+                # 讓上層決定重試/告警，而不是讓業務層誤以為已上鏈。
                 logger.error(f"❌ pysui 調用失敗: {e}")
-                # 如果 pysui 失敗，生成模擬交易
-                import hashlib
-                data = f"{escrow_object_id}{trip_id}{datetime.utcnow().isoformat()}"
-                mock_tx_hash = hashlib.sha256(data.encode()).hexdigest()
-                
-                logger.warning(f"⚠️ 使用模擬交易: {mock_tx_hash}")
                 return {
-                    "success": True,
-                    "transaction_hash": mock_tx_hash,
-                    "note": f"模擬交易（pysui 錯誤: {str(e)}）"
+                    "success": False,
+                    "error": f"鏈上釋放交易失敗: {str(e)}"
                 }
             
         except Exception as e:
@@ -685,6 +681,111 @@ class SuiService:
                 "error": str(e)
             }
     
+    async def call_contract_admin_refund(
+        self,
+        package_id: str,
+        cap_id: str,
+        pool_id: str,
+        recipient: str,
+        amount_mist: int,
+        trip_id: int,
+    ) -> Dict[str, Any]:
+        """
+        平台以 RefundCapability 從退款池直接退款給 recipient（admin 核准路徑）。
+        呼叫合約 refund_module_v2::admin_refund_from_pool，用平台 operator 金鑰簽章。
+        鏈上失敗一律明確回報，絕不回假 hash。
+        """
+        operator_private_key = getattr(settings, "OPERATOR_PRIVATE_KEY", None)
+        if not operator_private_key:
+            return {"success": False, "error": "缺少 OPERATOR_PRIVATE_KEY"}
+        if not (package_id and cap_id and pool_id):
+            return {"success": False, "error": "缺少 package/cap/pool ID"}
+
+        try:
+            from pysui import SuiConfig, SyncClient
+            from pysui.sui.sui_types.scalars import ObjectID, SuiU64, SuiString
+            from pysui.sui.sui_txn import SyncTransaction
+
+            cfg = SuiConfig.user_config(rpc_url=self.node_url, prv_keys=[operator_private_key])
+            client = SyncClient(cfg)
+            txn = SyncTransaction(client=client)
+            txn.move_call(
+                target=f"{package_id}::refund_module_v2::admin_refund_from_pool",
+                arguments=[
+                    ObjectID(cap_id),
+                    ObjectID(pool_id),
+                    SuiString(recipient),
+                    SuiU64(amount_mist),
+                    SuiU64(trip_id),
+                ],
+            )
+            logger.info(f"💸 admin_refund_from_pool: {amount_mist} MIST → {recipient} (trip {trip_id})")
+            result = txn.execute(gas_budget="10000000")
+            if result.is_ok():
+                digest = result.result_data.digest
+                logger.info(f"✅ 退款上鏈成功: {digest}")
+                return {"success": True, "transaction_hash": digest, "status": "confirmed"}
+            error_msg = str(result.result_data)
+            logger.error(f"❌ 退款上鏈失敗: {error_msg}")
+            return {"success": False, "error": f"退款交易失敗: {error_msg}"}
+        except ImportError as e:
+            return {"success": False, "error": f"pysui 未安裝: {e}"}
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"❌ admin_refund_from_pool 失敗: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def call_contract_resolve_dispute(
+        self,
+        package_id: str,
+        arbiter_cap_id: str,
+        escrow_object_id: str,
+        dispute_object_id: str,
+        ruling: int,
+    ) -> Dict[str, Any]:
+        """
+        仲裁者（平台持 ArbiterCap）裁決爭議：ruling=1 判給司機、2 退乘客。
+        呼叫 payment_escrow::resolve_dispute，用 operator 金鑰簽章。
+        """
+        operator_private_key = getattr(settings, "OPERATOR_PRIVATE_KEY", None)
+        if not operator_private_key:
+            return {"success": False, "error": "缺少 OPERATOR_PRIVATE_KEY"}
+        if not (package_id and arbiter_cap_id and escrow_object_id and dispute_object_id):
+            return {"success": False, "error": "缺少 package/cap/escrow/dispute ID"}
+        if ruling not in (1, 2):
+            return {"success": False, "error": "ruling 必須為 1（判司機）或 2（退乘客）"}
+
+        try:
+            from pysui import SuiConfig, SyncClient
+            from pysui.sui.sui_types.scalars import ObjectID, SuiU8
+            from pysui.sui.sui_txn import SyncTransaction
+
+            cfg = SuiConfig.user_config(rpc_url=self.node_url, prv_keys=[operator_private_key])
+            client = SyncClient(cfg)
+            txn = SyncTransaction(client=client)
+            txn.move_call(
+                target=f"{package_id}::payment_escrow::resolve_dispute",
+                arguments=[
+                    ObjectID(arbiter_cap_id),
+                    ObjectID(escrow_object_id),
+                    ObjectID(dispute_object_id),
+                    SuiU8(ruling),
+                ],
+            )
+            logger.info(f"⚖️ resolve_dispute escrow={escrow_object_id} ruling={ruling}")
+            result = txn.execute(gas_budget="10000000")
+            if result.is_ok():
+                digest = result.result_data.digest
+                logger.info(f"✅ 爭議裁決上鏈成功: {digest}")
+                return {"success": True, "transaction_hash": digest, "status": "confirmed"}
+            error_msg = str(result.result_data)
+            logger.error(f"❌ 爭議裁決失敗: {error_msg}")
+            return {"success": False, "error": f"裁決交易失敗: {error_msg}"}
+        except ImportError as e:
+            return {"success": False, "error": f"pysui 未安裝: {e}"}
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"❌ resolve_dispute 失敗: {e}")
+            return {"success": False, "error": str(e)}
+
     async def transfer_sui(
         self,
         to_address: str,
