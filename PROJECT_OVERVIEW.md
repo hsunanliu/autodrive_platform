@@ -1,19 +1,24 @@
-# AutoDrive 專案架構與需求總覽
+# ChainSUI（AutoDrive）專案架構與需求總覽
 
-**更新日期**: 2025-10-24
-**專案狀態**: 動態定價系統整合完成，待測試
+**更新日期**: 2026-07-12
+**專案狀態**: 生產級安全加固完成；Agent 委託 / Walrus / ZKP 已導入（`sui move test` 13/13 PASS）
+**目標賽事**: Sui Overflow 2026「Agentic Web」賽道
+
+> 📌 生產級加固的完整進度、問題清單、驗證方式見 **[`docs/PRODUCTION_HARDENING_ROADMAP.md`](docs/PRODUCTION_HARDENING_ROADMAP.md)**（單一事實來源）。
 
 ---
 
 ## 🎯 專案定位
 
-**AutoDrive** 是一個基於 **Sui 區塊鏈**的去中心化叫車平台，結合 Web3 技術實現透明、安全的共享經濟服務。
+**ChainSUI** 是一個基於 **Sui 區塊鏈**的去中心化 DePIN 叫車平台，含能為乘客/司機自動報價、搓合、並在受限授權下代發交易的 AI Agent。
 
 ### 核心價值
-1. **去中心化支付** - 使用 Sui 區塊鏈智能合約管理託管支付
-2. **透明定價** - 動態定價機制公開透明，用戶可選擇
-3. **即時通訊** - WebSocket 實現低延遲的即時通知
-4. **跨平台** - Flutter 移動端 + React 管理後台
+1. **Agent 能力委託（Agentic Web）** - 用戶以 `OperatorCap` 授權 Agent 在額度/時效/動作白名單內代發交易；私鑰留在用戶端。
+2. **去中心化支付** - Sui 智能合約託管支付；釋放需乘客簽章或 Agent 的 OperatorCap。
+3. **去中心化存儲（Walrus）** - GPS 軌跡、評價、退款佐證存 Walrus，鏈上只錨定 blob_id + 雜湊。
+4. **ZKP / DID 身分** - `sui::groth16` 原生驗證年齡/駕照，不揭露個資。
+5. **透明定價 + 即時通訊** - 動態定價、Socket.IO 低延遲通知。
+6. **跨平台** - Flutter 移動端 + React 管理後台。
 
 ---
 
@@ -66,14 +71,24 @@
 - **後端儲存**: micro SUI (實際上就是 MIST)
 - **前端顯示**: SUI (需除以 10^9)
 
-### 智能合約功能
-```move
-// contracts/sources/
-- user_registry.move      // 用戶註冊與驗證
-- vehicle_registry.move   // 車輛註冊
-- ride_escrow.move        // 行程託管支付
-- payment.move            // 支付處理
+### 智能合約模組（實際）
 ```
+// contracts/sources/
+agent/agent_registry.move          // OperatorCap 委託（額度/時效/動作白名單/撤銷）
+financial/payment_escrow.move      // 託管鎖定/釋放/退款；釋放需乘客或 OperatorCap；複合原子結算
+financial/refund_module_v2.move    // 退款池，出金需 RefundCapability
+identity/credential_verifier.move  // sui::groth16 原生 ZKP 驗證 + AdminCap
+identity/did_registry.move         // DID（內嵌位址綁定 controller）
+identity/user_registry.move        // 用戶（信譽由 admin 把關，防自我提權）
+identity/vehicle_registry.move     // 車輛
+identity/trusted_issuers.move      // 受信任 VC 簽發者
+business/trip_receipt.move         // 行程收據（錨定 Walrus 軌跡 blob）
+business/rating_proof.move         // 評價存證（綁行程；錨定 Walrus 內容 blob）
+utils/{constants,events}.move      // 常數（含 2.5% 平台費率）、事件
+```
+
+> 安全設計：資金移動/狀態變更皆有存取控管（Capability 或 sender/witness 斷言）；
+> 合約安全測試見 `contracts/tests/security_tests.move`（13 tests）。
 
 ---
 
@@ -354,12 +369,20 @@ flutter test
 ## 📝 重要配置
 
 ### 後端環境變數 (.env)
+完整範例見 `backend/.env.example`。關鍵變數（非 DEBUG 模式缺少會 fail-fast）：
 ```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/autodrive_dev
-SECRET_KEY=your-secret-key
-SUI_NETWORK=testnet
-SUI_RPC_URL=https://fullnode.testnet.sui.io:443
+DEBUG=false
+DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST:5432/autodrive
+SECRET_KEY=            # openssl rand -hex 32
+CORS_ALLOW_ORIGINS=http://localhost:3000
+SUI_NODE_URL=https://fullnode.testnet.sui.io:443
+CONTRACT_PACKAGE_ID=  # 由 scripts/ops/deploy_and_init.sh 取得
+OPERATOR_PRIVATE_KEY= # Agent/平台金鑰，由 secret manager 注入，勿落地
+MOCK_MODE=false
+WALRUS_PUBLISHER_URL=https://publisher.walrus-testnet.walrus.space
+WALRUS_AGGREGATOR_URL=https://aggregator.walrus-testnet.walrus.space
 ```
+> ⚠️ 切勿把真實私鑰/金鑰提交或落地 `.env`；生產請用 secret manager。
 
 ### 前端 API 端點
 ```dart
@@ -432,6 +455,6 @@ ws://192.168.66.54:8000/
 
 ---
 
-**最後更新**: 2025-10-24
-**版本**: v1.0 (動態定價整合完成)
-**狀態**: ✅ 後端完成 | ✅ 前端整合完成 | ⏳ 測試待進行
+**最後更新**: 2026-07-12
+**版本**: v2.0（生產級安全加固 + Agent 委託 + Walrus + ZKP）
+**狀態**: ✅ 合約安全加固完成（13 tests PASS）| ✅ 後端安全加固 | 🟡 Agent/Walrus 部署後接續（見路線圖）
