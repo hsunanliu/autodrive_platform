@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Layout from '../components/Layout';
-import { refundAPI } from '../services/api';
-import { Search, Filter, CheckCircle, XCircle, Clock, DollarSign, User, Calendar, AlertCircle, Pause } from 'lucide-react';
+import { refundAPI, refundChainAPI } from '../services/api';
+import { Search, Filter, CheckCircle, XCircle, Clock, DollarSign, User, Calendar, AlertCircle, Pause, Link2 } from 'lucide-react';
 
 const RefundManagement = () => {
   const [refunds, setRefunds] = useState([]);
@@ -141,6 +141,30 @@ const RefundManagement = () => {
     } catch (error) {
       console.error('更新退款狀態失敗:', error);
       alert('更新失敗: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  // 鏈上退款（實際從退款池付款給乘客 / 拒絕）— refund_module_v2::admin_refund_from_pool
+  const handleChainAction = async (action) => {
+    try {
+      setUpdating(true);
+      const id = selectedRefund.refund_request_id;
+      const res = action === 'approve'
+        ? await refundChainAPI.approve(id, decisionNote || null)
+        : await refundChainAPI.reject(id, decisionNote || null);
+      const tx = res.data?.transaction_hash;
+      alert(action === 'approve'
+        ? `✅ 鏈上退款成功${tx ? `\n交易: ${tx}` : ''}`
+        : '已拒絕退款');
+      setModalOpen(false);
+      setSelectedRefund(null);
+      setDecisionNote('');
+      fetchRefunds();
+    } catch (error) {
+      console.error('鏈上退款失敗:', error);
+      alert('鏈上退款失敗: ' + (error.response?.data?.detail || error.message));
     } finally {
       setUpdating(false);
     }
@@ -578,6 +602,24 @@ const RefundManagement = () => {
                 <XCircle size={18} />
                 拒絕
               </button>
+            </div>
+
+            {/* 鏈上退款（實際從退款池付款） */}
+            <div style={{ marginTop: '1.5rem', padding: '1.25rem', background: '#eef2ff', borderRadius: '16px', border: '2px solid #c7d2fe' }}>
+              <p style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 800, color: '#3730a3', marginBottom: '0.75rem' }}>
+                <Link2 size={18} /> 鏈上退款（實際付款給乘客）
+              </p>
+              <p style={{ fontSize: '0.8rem', color: '#4338ca', marginBottom: '1rem' }}>
+                由平台 RefundCapability 從退款池直接退款上鏈。需退款池有足夠餘額。
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <button onClick={() => handleChainAction('approve')} className="btn btn-success" disabled={updating}>
+                  <CheckCircle size={18} /> 鏈上核准並付款
+                </button>
+                <button onClick={() => handleChainAction('reject')} className="btn btn-danger" disabled={updating}>
+                  <XCircle size={18} /> 拒絕退款
+                </button>
+              </div>
             </div>
 
             {updating && (

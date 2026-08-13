@@ -4,6 +4,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import RefundManagement from './pages/RefundManagement';
+import DisputeManagement from './pages/DisputeManagement';
 import VehicleManagement from './pages/VehicleManagement';
 import UserManagement from './pages/UserManagement';
 import TripDetails from './pages/TripDetails';
@@ -28,6 +29,14 @@ function App() {
           element={
             <ProtectedRoute>
               <RefundManagement />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/disputes"
+          element={
+            <ProtectedRoute>
+              <DisputeManagement />
             </ProtectedRoute>
           }
         />

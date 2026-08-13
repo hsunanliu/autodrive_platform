@@ -11,6 +11,7 @@ import {
   X,
   Shield,
   ShoppingCart,
+  Gavel,
 } from 'lucide-react';
 
 const Header = () => {
@@ -29,6 +30,7 @@ const Header = () => {
     { path: '/dashboard', icon: LayoutDashboard, label: '儀表板' },
     { path: '/orders', icon: ShoppingCart, label: '訂單中心' },
     { path: '/refunds', icon: RefreshCcw, label: '退款管理' },
+    { path: '/disputes', icon: Gavel, label: '爭議仲裁' },
     { path: '/vehicles', icon: Car, label: '車輛管理' },
     { path: '/users', icon: Users, label: '使用者管理' },
     { path: '/trips', icon: Map, label: '行程管理' },
