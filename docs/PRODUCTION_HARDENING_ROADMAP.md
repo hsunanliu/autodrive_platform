@@ -205,6 +205,12 @@
 
 ## 8. 變更日誌 (Changelog)
 
+- 2026-08-14 · [實機白屏根因修復：啟動期主執行緒卡死 + HTTP 無 timeout] ·
+  - 症狀：實機白屏但 Dart log 持續輸出；`_getCurrentLocation` 無任何分支 log、`getUserTrips` 與 WebSocket 也無完成 log。
+  - 根因：`passenger_home_page.initState` 第一行就呼叫 `Geolocator.isLocationServiceEnabled()`——iOS 上它在主執行緒執行且可能長時間無回應（Apple 文件明載），第一幀因此永遠畫不出來（白屏＝iOS 啟動畫面），系統權限對話框也跳不出。
+  - 修法：(1) 定位改 `addPostFrameCallback` 延後到第一幀之後 + 該呼叫加 8s timeout；(2) `http_client_manager.executeRequest` 統一加 15s timeout，主機不可達時明確報「請求逾時＋排查指引」而非無聲卡住。`flutter analyze` 0 error。
+  - 待驗證：手機 Safari 開 `http://<Mac IP>:8000/health` 確認網路可達（getUserTrips/WS 卡住疑似手機到 Mac 網路仍不通）。
+  · `mobile/lib/passenger_home_page.dart`, `mobile/lib/services/http_client_manager.dart`
 - 2026-08-14 · [實機偵錯環境修復] · 兩個互不相關的問題：(1) 無線偵錯「Dart VM Service was not discovered」＝ `Info.plist` 缺 `NSBonjourServices`（`_dartVmService._tcp`）與 `NSLocalNetworkUsageDescription`，缺了系統不會跳「區域網路」授權、Flutter 找不到 VM Service，已補上；(2) Google 登入 http timeout ＝ `app_config.local.dart` 的後端位址仍是舊熱點 IP `172.20.10.14`，Mac 現為 `192.168.150.143`，手機連不到後端（`/health` 於新 IP 驗證可達），已更新（該檔 gitignored）。另查 USB 完全看不到 iPhone（`system_profiler SPUSBDataType` 無 Apple 裝置）→ 連線全走無線的原因是線材/埠不傳資料。 · `mobile/ios/Runner/Info.plist`, `mobile/lib/config/app_config.local.dart`(不入庫)
 
 - 2026-08-13 · [任務3 Flutter 靜態驗證] · `flutter pub get && flutter analyze`：唯一 error 是範本遺留 `test/widget_test.dart` 引用不存在的 `MyApp`，改為對應 `ProjectDappApp` 的最小 smoke test → **0 error**。剩 17 warning（全為 unused import/field/variable）與 402 info（`withOpacity`/`WillPopScope` deprecation、`avoid_print` 等），無功能影響，留待日後清理。 · `mobile/test/widget_test.dart`

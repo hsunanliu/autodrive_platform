@@ -62,7 +62,10 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
   @override
   void initState() {
     super.initState();
-    _getCurrentLocation(); // 🌍 獲取當前GPS位置
+    // 🌍 定位延到第一幀畫完後才啟動：iOS 的 locationServicesEnabled 在主執行緒
+    // 執行、可能長時間無回應（Apple 文件明載）。在 initState 直接呼叫會讓
+    // 第一幀畫不出來 → 整個 app 卡在白色啟動畫面。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _getCurrentLocation());
     _checkActiveTrip();
     // ✅ 移除車輛加載 - 不再需要選擇車輛
     _setupWebSocket();
@@ -73,8 +76,9 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
   /// 🌍 獲取當前GPS位置
   Future<void> _getCurrentLocation() async {
     try {
-      // 1. 檢查定位服務是否啟用
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      // 1. 檢查定位服務是否啟用（平台層可能卡住，加 timeout 防整條流程無聲懸掛）
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled()
+          .timeout(const Duration(seconds: 8));
       if (!serviceEnabled) {
         print('⚠️ 定位服務未啟用');
         setState(() => _isLoadingLocation = false);

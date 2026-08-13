@@ -1,5 +1,7 @@
 // mobile/lib/services/http_client_manager.dart
 
+import 'dart:async';
+
 import 'package:http/http.dart' as http;
 
 /// HTTP Client 管理器
@@ -68,17 +70,26 @@ class HttpClientManager {
   Future<http.Response> executeRequest(
     Future<http.Response> Function(http.Client) request,
   ) async {
+    // 主機不可達（IP 錯誤、防火牆、跨網段）時 TCP 會等非常久，
+    // 統一加 timeout 讓所有 API 呼叫失敗得明確、可診斷，而非無聲卡住。
+    const timeout = Duration(seconds: 15);
     try {
-      return await request(client);
+      return await request(client).timeout(timeout);
     } on http.ClientException catch (e) {
       // 如果是 client 已關閉錯誤，重置並重試
       if (e.message.contains('Client is already closed') ||
           e.message.contains('Connection closed')) {
         print('⚠️ HTTP Client: 檢測到 client 已關閉，正在重試...');
         reset();
-        return await request(client);
+        return await request(client).timeout(timeout);
       }
       rethrow;
+    } on TimeoutException {
+      throw http.ClientException(
+        '請求逾時（${timeout.inSeconds}s）：後端無回應。'
+        '請確認手機與電腦連同一個 Wi-Fi、app_config.local.dart 的 IP 正確、'
+        'Mac 防火牆未擋 8000 埠',
+      );
     }
   }
 }
