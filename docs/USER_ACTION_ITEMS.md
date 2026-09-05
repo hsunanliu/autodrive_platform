@@ -2,7 +2,17 @@
 
 > 這是「**需要你本人操作、我（Claude）無法代做**」的事情的**單一清單**。
 > 程式碼側我已完成的進度見 `docs/PRODUCTION_HARDENING_ROADMAP.md` §8 變更日誌。
-> 完成一項就打勾。最後更新：2026-07-29。
+> 完成一項就打勾。最後更新：2026-09-05。
+
+## 🔴 P0 — Mapbox token 輪替（2026-09-05 新增）
+
+兩顆 pk. token（帳號 hy1iii）從最初的 commit 就在 GitHub 歷史裡＝視為已洩漏。
+程式碼側我已修好：token 改讀 gitignored 的 `mobile/lib/config/map_config.local.dart`，
+被 push protection 點名的未推送 blob 也已用 filter-repo 洗掉；但**舊已推送歷史裡的 token 仍在遠端**。
+- 位置：https://account.mapbox.com/access-tokens/
+- [ ] 刪除（revoke）這兩顆舊 token（一顆仍有效、一顆已失效但也刪掉）
+- [ ] 建新 public token，設 **URL restrictions**，填入 `map_config.local.dart`
+- pk token 本屬前端可公開型，風險是被盜用刷配額，輪替＋URL 限制即可，無需重寫已推送歷史
 
 ---
 

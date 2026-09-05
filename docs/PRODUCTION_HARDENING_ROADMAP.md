@@ -205,6 +205,7 @@
 
 ## 8. 變更日誌 (Changelog)
 
+- 2026-09-05 · [Mapbox token 洩漏處置 + push 解鎖] · push 被 GitHub push protection 擋（歷史 commit 含 Mapbox pk token）。處置：(1) 6 處硬編碼 token 改讀 gitignored `map_config.local.dart`（新 `MapConfig` 單一來源，無 token 退回 OSM；real_ride 舊 token 實測 401 已死，統一換有效顆）；(2) `git filter-repo --replace-text` 洗掉未推送 18 commit 中的 token blob（origin 錨點 SHA 不變）；(3) remote 更新至改名後的 `hsuanliu112/autodrive_platform` 並 push 成功。⚠️ token 自最初 commit 即在已推送歷史＝視為洩漏，輪替待辦已入 USER_ACTION_ITEMS P0。`flutter analyze` 0 error（419 issues＝既有基準線）。 · `mobile/lib/config/map_config*`, `mobile/lib/{passenger_home_page,driver_home_page_new}.dart`, `mobile/lib/pages/{trip_in_progress,vehicle_recall,real_ride}_page.dart`, `mobile/.gitignore`, `.github/workflows/ci.yml`
 - 2026-09-05 · [定位變更 + 最後死碼清除] ·
   - **不再參加 Sui Overflow 2026**，專案改定位為「做到生產級品質的 side project」；CLAUDE.md、README、PROJECT_OVERVIEW、本檔頁首同步改寫（品質/安全標準不變）。
   - 刪除 `contracts/iota-src/`（539MB gitlink+目錄）與 `identity/`（TS 版 DID/VC 舊實作，後端零引用）。
