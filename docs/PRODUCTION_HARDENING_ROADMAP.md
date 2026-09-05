@@ -201,10 +201,24 @@
 
 > **里程碑（2026-07-12）**：`sui move test` 綠燈，9 個安全測試證明核心修復有效。
 
+### H — Agent 智能決策層（守護 + 對話助理）
+> 三層不變式：LLM 決策（可換模型、可失效）→ `agent_guardrails.validate_action`（Python 硬邊界）→ `agent_service.*_via_agent`（OperatorCap 鏈上硬邊界）。模型用開源（Qwen 系，OpenAI-compatible endpoint），`AGENT_LLM_ENABLED` 預設關閉時完全走既有規則路徑。
+- [x] ✅ **H1** 後端結算決策層：`llm_client`（httpx 打 OpenAI-compatible）+ `agent_brain`（decide_settlement/settle_trip/execute_confirmed）+ migration 007（`agent_decisions` 表 + 委託 `auto_threshold_mist`）+ `trip_service.complete_trip/cancel_trip` 接線（fail-open 回規則）+ agent API（activities/confirm/decline/settings）+ WS `notify_agent_decision`。分級權限：小額自動代發、大額 pending 待乘客確認。**方向護欄**：LLM 只能確認規則方向或升級 needs_review，不能翻轉 release↔refund。**後端整合測試 71 passed**（43 基準 + 28 新）。
+- [x] ✅ **H2** 前端 Agent 呈現：委託入口（profile_page + passenger_home PopupMenu，解決孤兒頁）、delegation_page 強化（額度/時效/門檻明細 + 自動門檻滑桿 + 活動 feed）、`agent_activity_card` widget（含大額確認/拒絕）、付款 dialog 標示簽署方（本人 zkLogin vs 平台代簽）。`flutter analyze` 新碼 0 error/warning。
+- [ ] ⬜ **H3** 對話式行程助理（Phase B）：`POST /agent/chat` LLM function-calling（唯讀工具集，不可直接觸發資金動作）+ `assistant_page.dart`。待 H1/H2 實機驗收後啟動。
+
+> **待處理（H1 test author 回報的設計項）**：多 cap 情境下 `_get_auto_threshold`（取最新 cap）與 `_get_cap_record`（依 cap id）可能取到不同 cap 的門檻——目前 `get_active_cap` 只回單一 cap，實務不發生；多 cap 功能上線前需統一。
+
 ---
 
 ## 8. 變更日誌 (Changelog)
 
+- 2026-09-05 · [H1+H2 Agent 智能決策層（守護）] · 導入 LLM 結算決策層（開源模型，`AGENT_LLM_ENABLED` 預設關）。三層不變式：LLM 建議 → `agent_guardrails`（Python 硬邊界）→ `agent_service`+OperatorCap（鏈上）。
+  - 後端：`llm_client.py`（httpx 打 OpenAI-compatible /chat/completions，逾時/壞 JSON → None fallback）、`agent_brain.py`（`decide_settlement`/`settle_trip`/`execute_confirmed`；分級：≤ `auto_threshold_mist` 自動代發、> 則 pending 待確認、flag_review→needs_review）、`models/agent_decision.py` + migration 007（`agent_decisions` 表 + 委託 `auto_threshold_mist`，已套用 DB）、`trip_service` complete/cancel 接線（handled=False 時完全走既有規則路徑，行為不變）、`api/v1/agent.py`（+activities/confirm/decline/settings）、`notifier.notify_agent_decision`、`config.py`（LLM_* + fail-fast）。
+  - **安全**：方向護欄——LLM 只能確認規則的資金方向或升級 needs_review，不能翻轉 release↔refund（防 prompt injection 改資金流向）；金額一律用系統值忽略 LLM 自報。
+  - 前端：委託入口（profile_page + passenger_home，解決孤兒頁）、delegation_page 強化（明細 + 自動門檻滑桿 + Agent 活動 feed）、`agent_activity_card.dart`（大額確認/拒絕）、付款 dialog 簽署方標示、api_service 新增 4 端點。
+  - 驗證：後端整合測試 **71 passed**（43 基準 + 28 新，`docker compose exec backend python -m pytest`）；backend `/health` 200 無 Traceback；`flutter analyze` 新碼 0 error/warning。外部依賴（LLM/鏈/DB）全 fake，不製造假交易 hash。
+  · `backend/app/services/{llm_client,agent_brain}.py`(新), `backend/app/models/agent_decision.py`(新), `backend/migrations/007_add_agent_decisions.sql`(新), `backend/app/{config.py,services/trip_service.py,api/v1/agent.py,websocket/notifier.py,models/{delegation,__init__}.py}`, `backend/tests/integration/test_{llm_client,agent_brain_decide,agent_brain_settle}.py`(新), `mobile/lib/widgets/agent_activity_card.dart`(新), `mobile/lib/pages/delegation_page.dart`, `mobile/lib/{profile_page,passenger_home_page}.dart`, `mobile/lib/services/api_service.dart`, `mobile/lib/widgets/one_click_payment_dialog.dart`
 - 2026-09-05 · [Mapbox token 洩漏處置 + push 解鎖] · push 被 GitHub push protection 擋（歷史 commit 含 Mapbox pk token）。處置：(1) 6 處硬編碼 token 改讀 gitignored `map_config.local.dart`（新 `MapConfig` 單一來源，無 token 退回 OSM；real_ride 舊 token 實測 401 已死，統一換有效顆）；(2) `git filter-repo --replace-text` 洗掉未推送 18 commit 中的 token blob（origin 錨點 SHA 不變）；(3) remote 更新至改名後的 `hsuanliu112/autodrive_platform` 並 push 成功。⚠️ token 自最初 commit 即在已推送歷史＝視為洩漏，輪替待辦已入 USER_ACTION_ITEMS P0。`flutter analyze` 0 error（419 issues＝既有基準線）。 · `mobile/lib/config/map_config*`, `mobile/lib/{passenger_home_page,driver_home_page_new}.dart`, `mobile/lib/pages/{trip_in_progress,vehicle_recall,real_ride}_page.dart`, `mobile/.gitignore`, `.github/workflows/ci.yml`
 - 2026-09-05 · [定位變更 + 最後死碼清除] ·
   - **不再參加 Sui Overflow 2026**，專案改定位為「做到生產級品質的 side project」；CLAUDE.md、README、PROJECT_OVERVIEW、本檔頁首同步改寫（品質/安全標準不變）。
