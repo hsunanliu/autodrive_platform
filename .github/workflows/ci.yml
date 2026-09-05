@@ -60,6 +60,7 @@ jobs:
         run: |
           cp app_config.local.dart.example app_config.local.dart
           cp google_maps_config.local.dart.example google_maps_config.local.dart
+          cp map_config.local.dart.example map_config.local.dart
       - name: flutter pub get
         working-directory: mobile
         run: flutter pub get
