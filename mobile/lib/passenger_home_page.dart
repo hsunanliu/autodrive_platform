@@ -1126,9 +1126,21 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
             onSelected: (value) {
               if (value == 'logout') {
                 _handleLogout();
+              } else if (value == 'delegation') {
+                Navigator.pushNamed(context, '/delegation');
               }
             },
             itemBuilder: (BuildContext context) => [
+              const PopupMenuItem<String>(
+                value: 'delegation',
+                child: Row(
+                  children: [
+                    Icon(Icons.smart_toy, color: Color(0xFF7C3AED)),
+                    SizedBox(width: 8),
+                    Text('Agent 自動結算'),
+                  ],
+                ),
+              ),
               const PopupMenuItem<String>(
                 value: 'logout',
                 child: Row(

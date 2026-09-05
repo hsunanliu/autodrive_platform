@@ -664,7 +664,7 @@ class _OneClickPaymentDialogState extends State<OneClickPaymentDialog>
           if (!mounted) return;
           _transactionDigest = zk.digest;
           _escrowObjectId = zk.escrowObjectId;
-          setState(() => _statusMessage = '交易已上鏈（非託管）');
+          setState(() => _statusMessage = '✅ 交易已上鏈（本人 zkLogin 簽署，非託管）');
           return;
         }
         print('⚠️ zkLogin 付款失敗，改用後備路徑: ${zk.error}');
@@ -686,7 +686,7 @@ class _OneClickPaymentDialogState extends State<OneClickPaymentDialog>
     if (result['success'] == true) {
       _transactionDigest = result['tx_hash'] ?? result['escrow_id'];
       _escrowObjectId = result['escrow_id'] ?? result['escrow_object_id'];
-      setState(() => _statusMessage = '交易已提交到鏈上');
+      setState(() => _statusMessage = '✅ 交易已提交到鏈上（平台代簽後備路徑）');
     } else {
       throw Exception(result['error'] ?? '付款失敗（zkLogin 與後備代簽皆未成功）');
     }

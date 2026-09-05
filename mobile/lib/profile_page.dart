@@ -296,6 +296,17 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
           ),
         const SizedBox(height: 12),
+        // Agent 自動結算授權（OperatorCap 委託 + 決策活動）
+        ElevatedButton.icon(
+          onPressed: () => Navigator.pushNamed(context, '/delegation'),
+          icon: const Icon(Icons.smart_toy, color: Colors.white),
+          label: const Text('Agent 自動結算', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF7C3AED),
+            padding: const EdgeInsets.symmetric(vertical: 16),
+          ),
+        ),
+        const SizedBox(height: 12),
         ElevatedButton.icon(
           onPressed: _logout,
           icon: const Icon(Icons.logout, color: Colors.white),

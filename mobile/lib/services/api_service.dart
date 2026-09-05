@@ -285,6 +285,31 @@ class ApiService {
   /// 撤銷委託
   static Future<Map<String, dynamic>> revokeDelegation() => delete('/agent/delegation');
 
+  /// 設定自動執行門檻（MIST）：金額 ≤ 此值由 Agent 自動代發，> 此值需乘客確認
+  static Future<Map<String, dynamic>> updateDelegationSettings(int autoThresholdMist) =>
+      put('/agent/delegation/settings', {'auto_threshold_mist': autoThresholdMist});
+
+  // ========== Agent 決策活動（LLM 決策層）==========
+
+  /// Agent 代理活動 feed（可選 status 過濾，如 'pending' 只看待確認）
+  static Future<Map<String, dynamic>> getAgentActivities({
+    int limit = 20,
+    int offset = 0,
+    String? status,
+  }) {
+    final q = <String>['limit=$limit', 'offset=$offset'];
+    if (status != null) q.add('status=$status');
+    return get('/agent/activities?${q.join('&')}');
+  }
+
+  /// 乘客確認一筆大額 pending 決策 → 實際代發上鏈
+  static Future<Map<String, dynamic>> confirmAgentDecision(int decisionId) =>
+      post('/agent/decisions/$decisionId/confirm', {});
+
+  /// 乘客拒絕一筆 pending 決策
+  static Future<Map<String, dynamic>> declineAgentDecision(int decisionId) =>
+      post('/agent/decisions/$decisionId/decline', {});
+
   // ========== 用戶相關 API ==========
 
   // 用戶註冊
