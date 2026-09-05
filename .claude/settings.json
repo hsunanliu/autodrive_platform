@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in *contracts/*.move) cd \"$CLAUDE_PROJECT_DIR/contracts\" && out=$(sui move build 2>&1) || { echo 'sui move build 失敗，請修復後再繼續：' >&2; echo \"$out\" | tail -40 >&2; exit 2; };; esac",
+            "timeout": 180,
+            "statusMessage": "sui move build 驗證中…"
+          }
+        ]
+      }
+    ]
+  }
+}

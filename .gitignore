@@ -106,3 +106,4 @@ mobile/lib/services/sui_contract_service.dart
 mobile/lib/services/geocoding_service.dart
 mobile/lib/services/google_directions_service.dart
 
+.claude/settings.local.json
