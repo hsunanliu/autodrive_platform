@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import '../config/map_config.dart';
 import 'package:latlong2/latlong.dart';
 import '../services/api_service.dart';
 import '../services/websocket_service.dart';
@@ -473,7 +474,7 @@ class _VehicleRecallPageState extends State<VehicleRecallPage> {
             children: [
               TileLayer(
                 urlTemplate:
-                    'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=pk.eyJ1IjoiaHkxaWlpIiwiYSI6ImNtZW4wcHdraDB3a3Mya3Nlc29mNGY3ZHAifQ.c1EtA8uDOpR7Q2-uPVJSaA',
+                    MapConfig.darkTileUrl,
                 userAgentPackageName: 'com.autodrive.app',
               ),
               // 車輛標記

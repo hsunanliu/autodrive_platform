@@ -1,6 +1,7 @@
 // mobile/lib/pages/real_ride_page.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import '../config/map_config.dart';
 import 'package:latlong2/latlong.dart';
 import '../services/api_service.dart';
 import '../services/websocket_service.dart';
@@ -395,14 +396,9 @@ class _RealRidePageState extends State<RealRidePage> {
             ),
             children: [
               TileLayer(
-                urlTemplate:
-                    'https://api.mapbox.com/styles/v1/mapbox/light-v11/tiles/512/{z}/{x}/{y}@2x?access_token=pk.eyJ1IjoiaHkxaWlpIiwiYSI6ImNtYmM4a204djFiaHEyaXByZTkwYmNmZW0ifQ.Gbt4zAxe38-eS7b7pCC6HA',
-                additionalOptions: const {
-                  'access_token':
-                      'pk.eyJ1IjoiaHkxaWlpIiwiYSI6ImNtYmM4a204djFiaHEyaXByZTkwYmNmZW0ifQ.Gbt4zAxe38-eS7b7pCC6HA',
-                },
-                tileSize: 512,
-                zoomOffset: -1,
+                urlTemplate: MapConfig.lightTileUrl512,
+                tileSize: MapConfig.lightTileSize,
+                zoomOffset: MapConfig.lightZoomOffset,
               ),
 
               MarkerLayer(

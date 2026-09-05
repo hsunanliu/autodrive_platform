@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'config/map_config.dart';
 import 'package:latlong2/latlong.dart';
 
 import 'role_select_page.dart';
@@ -502,7 +503,7 @@ class _DriverHomePageNewState extends State<DriverHomePageNew> with SingleTicker
             children: [
               TileLayer(
                 urlTemplate:
-                    'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=pk.eyJ1IjoiaHkxaWlpIiwiYSI6ImNtZW4wcHdraDB3a3Mya3Nlc29mNGY3ZHAifQ.c1EtA8uDOpR7Q2-uPVJSaA',
+                    MapConfig.darkTileUrl,
                 userAgentPackageName: 'com.autodrive.driver',
                 // 使用默認的 NetworkTileProvider，不傳遞 httpClient
               ),

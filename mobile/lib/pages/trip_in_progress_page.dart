@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
+import '../config/map_config.dart';
 import 'package:latlong2/latlong.dart';
 import '../services/api_service.dart';
 import '../services/google_directions_service.dart';
@@ -787,7 +788,7 @@ class _TripInProgressPageState extends State<TripInProgressPage> {
       children: [
         TileLayer(
           urlTemplate:
-              'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=MAPBOX_TOKEN_REMOVED',
+              MapConfig.darkTileUrl,
           userAgentPackageName: 'com.autodrive.driver',
           // 使用默認的 NetworkTileProvider，不傳遞 httpClient
         ),

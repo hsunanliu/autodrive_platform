@@ -11,6 +11,7 @@ import 'services/api_service.dart';
 import 'services/google_places_service.dart';
 import 'services/websocket_service.dart';
 import 'services/price_service.dart';
+import 'config/map_config.dart';
 import 'session_manager.dart';
 import 'trip_history_page.dart';
 import 'widgets/google_place_search_field.dart';
@@ -1171,7 +1172,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
               children: [
                 TileLayer(
                   urlTemplate:
-                      'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=MAPBOX_TOKEN_REMOVED',
+                      MapConfig.darkTileUrl,
                   userAgentPackageName: 'com.autodrive.app',
                   // 使用默認的 NetworkTileProvider，不傳遞 httpClient
                 ),
@@ -1796,7 +1797,7 @@ class _PassengerHomePageState extends State<PassengerHomePage> {
                     ),
                     children: [
                       TileLayer(
-                        urlTemplate: 'https://api.mapbox.com/styles/v1/mapbox/dark-v11/tiles/{z}/{x}/{y}@2x?access_token=MAPBOX_TOKEN_REMOVED',
+                        urlTemplate: MapConfig.darkTileUrl,
                         userAgentPackageName: 'com.autodrive.app',
                       ),
                       // 標記層
