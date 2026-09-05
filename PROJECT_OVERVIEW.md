@@ -2,7 +2,7 @@
 
 **更新日期**: 2026-07-12
 **專案狀態**: 生產級安全加固完成；Agent 委託 / Walrus / ZKP 已導入（`sui move test` 13/13 PASS）
-**目標賽事**: Sui Overflow 2026「Agentic Web」賽道
+**專案定位**: side project，目標是做到生產級品質（原定參加 Sui Overflow 2026，已於 2026-09 取消參賽）
 
 > 📌 生產級加固的完整進度、問題清單、驗證方式見 **[`docs/PRODUCTION_HARDENING_ROADMAP.md`](docs/PRODUCTION_HARDENING_ROADMAP.md)**（單一事實來源）。
 

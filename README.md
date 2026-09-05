@@ -1,11 +1,11 @@
 # ChainSUI — 去中心化 DePIN 叫車平台
 
-> 基於 **Sui 區塊鏈**的去中心化叫車平台，參加 **Sui Overflow 2026「Agentic Web」賽道**。
+> 基於 **Sui 區塊鏈**的去中心化叫車平台（side project，目標是把它做到生產級品質）。
 > 系統含乘客、司機，以及能為雙方自動報價、搓合、並在**受限授權下代發交易**的 AI Agent。
 
 ## 📖 專案簡介
 
-ChainSUI 用區塊鏈實現透明、安全的叫車與支付，並具備三項對賽道核心的能力：
+ChainSUI 用區塊鏈實現透明、安全的叫車與支付，三項核心能力：
 
 - 🤖 **Agent 能力委託（Agentic Web）** — 用戶用 `OperatorCap` 授權平台 Agent 在**額度/時效/動作白名單**內代發交易；私鑰留在用戶端，平台不再是「全權代理」。
 - 🐋 **Walrus 去中心化存儲** — GPS 軌跡、評價內容、退款佐證等大容量資料存 Walrus，鏈上只錨定 `blob_id` + 內容雜湊。
@@ -115,8 +115,9 @@ cd mobile && flutter test        # 行動端
 ## 📚 文檔
 
 - **[生產級加固路線圖](docs/PRODUCTION_HARDENING_ROADMAP.md)** — 問題清單、優先序、進度、驗證方式（**必讀**）
-- [ZKP 實作計畫](docs/ZKP_IMPLEMENTATION_PLAN.md) / [ZKP 威脅模型](docs/ZKP_THREAT_MODEL_ANALYSIS.md)
-- [合約部署](contracts/DEPLOY.md)
+- [安全威脅模型與 ZK 身份藍圖](docs/SECURITY_THREAT_MODEL.md)
+- [故障排除速查](docs/TROUBLESHOOTING.md) / [使用者待辦](docs/USER_ACTION_ITEMS.md)
+- 合約部署：`scripts/ops/deploy_and_init.sh`（一鍵發布並擷取 object ID）
 - API 文檔：`http://localhost:8000/docs`
 
 ## 🔐 安全性
@@ -132,4 +133,4 @@ MIT — 見 [LICENSE](LICENSE)。
 
 ---
 
-**注意**：本專案處於黑客松開發階段；部分後端整合（Agent 代發交易的 per-user cap 發現、行動端本地產證）需部署後接續，詳見路線圖。
+**注意**：部分整合仍在進行（Agent 代發交易的 per-user cap 發現、行動端本地產證），詳見路線圖。

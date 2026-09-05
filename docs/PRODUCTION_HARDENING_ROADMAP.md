@@ -4,8 +4,8 @@
 > 任何 agent（Move 合約、後端、行動端、測試）接手前**必讀本檔**，並在完成工作後更新 [§7 進度追蹤](#7-進度追蹤-progress-tracker) 與 [§8 變更日誌](#8-變更日誌-changelog)。
 
 - **專案**：ChainSUI — 去中心化叫車 DePIN 平台
-- **目標賽事**：Sui Overflow 2026「Agentic Web」賽道
-- **鏈**：Sui（testnet framework）。**注意：`iota-src/`、`iota_*` 服務、`tests/run_tests.sh` 是舊 IOTA 遺留死碼，不要沿用。**
+- **目標**：side project，做到生產級品質（原 Sui Overflow 2026 參賽計畫已於 2026-09 取消，品質標準不變）
+- **鏈**：Sui（testnet framework）。**注意：舊 IOTA 遺留（`iota_*` 服務等）是死碼，不要沿用；`contracts/iota-src/` 已於 2026-09-05 刪除。**
 - **審查基準日**：2026-07-12
 - **狀態圖例**：⬜ 未開始 / 🟡 進行中 / ✅ 完成 / ⛔ 卡住（需人工）
 
@@ -205,6 +205,20 @@
 
 ## 8. 變更日誌 (Changelog)
 
+- 2026-09-05 · [定位變更 + 最後死碼清除] ·
+  - **不再參加 Sui Overflow 2026**，專案改定位為「做到生產級品質的 side project」；CLAUDE.md、README、PROJECT_OVERVIEW、本檔頁首同步改寫（品質/安全標準不變）。
+  - 刪除 `contracts/iota-src/`（539MB gitlink+目錄）與 `identity/`（TS 版 DID/VC 舊實作，後端零引用）。
+  - 追加刪除 `backend/app/services/iota_contract_service.py` + `backend/app/api/v1/contract_integration.py`（router 未註冊於 main.py、前端零呼叫＝雙死碼；刪後 `py_compile main.py` 通過、live backend `/health` 200 無 Traceback）。IOTA 遺留至此全數清除。
+  · `CLAUDE.md`, `README.md`, `PROJECT_OVERVIEW.md`, 刪 `contracts/iota-src/`, `identity/`, `backend/app/{services/iota_contract_service,api/v1/contract_integration}.py`
+- 2026-09-05 · [全 repo 文件/腳本大掃除] · 刪除 80 個過期 .md/.sh（皆先以 `git grep` 驗證 0 活引用，遵守鐵律 5）：docs/{reports,guides,setup} 整包與 2025-10/11 AutoDrive 時代的計畫/報告文件（ZKP_IMPLEMENTATION_PLAN、DRIVE_TOKEN、token_economics、FINAL_PROGRESS_REPORT、INDEX 等）、16 個 0-byte 佔位 md（contracts/docs 全空）、被 scripts/ops 取代的舊部署腳本（deploy_payment_escrow/init_refund_pool/create_test_wallet）、被 pytest 取代的 scripts/testing、run_flutter/update_ip 重複副本（各留根目錄一份，root update_ip.sh 已確認指向現行 `app_config.local.dart`）。README「文檔」區連結改指現存文件。保留：migrations/config README、FIREBASE_SETUP_GUIDE（對應 USER_ACTION_ITEMS 待辦）、scripts/ops、zkp/scripts、init-test-db.sh（docker-compose 掛載）。⚠️ 遺留候選（非 .md/.sh，未動）：`identity/`（TS 版 DID/VC 舊實作，後端零引用，真實 ZKP 在 `zkp/`）與 `contracts/iota-src` submodule。 · 全 repo
+- 2026-09-05 · [Claude 架構整備（loop engineering）] ·
+  - Subagent 目錄修正：`move-auditor`/`backend-test-author` 由無效的 `.claudecode/agents/` 搬到 `.claude/agents/`（此前從未被載入）；backend-test-author 由一次性 G2 工人改寫為長期回歸角色；兩者與 CLAUDE.md §3 的「19/19 寫死基準線」全改為「failed=0、總數不低於 roadmap 記載」。
+  - 確定性驗證 hook：新增 `.claude/settings.json` PostToolUse hook——Edit/Write 碰到 `contracts/**/*.move` 即自動跑 `sui move build`，失敗把錯誤餵回模型（已以真實 payload 實測觸發與通過）。
+  - 過期 context 清除：刪除 `.claudecode/prompts/` 整包（內容停在 2025-10 舊架構，與 CLAUDE.md 現況矛盾）；仍有效的專案專屬排錯知識濃縮為 `docs/TROUBLESHOOTING.md`；論文 PDF 移至 `docs/references/`。
+  - §8 歸檔：2026-07 全部條目（35 筆）搬至 `docs/changelog-2026-07.md`，§8 只留最近約一個月。
+  - CI：重寫 `.github/workflows/ci.yml`——舊檔是 IOTA 時代遺留（裝 `iota-cli`、`flutter build apk`，必炸）。新版三個 job：Move build/test（釘版 testnet-v1.53.2 CLI，下載連結驗證 200）、後端 `pytest tests/integration`、Flutter analyze/test（gitignored `*.local.dart` 以 `.example` 補位，符號已驗證一致；analyze 用 `--no-fatal-warnings` 對齊「0 error」標準）。實際跑通需待 push 後確認。
+  - 權限清單去沉積：`settings.local.json` 移除含過期 JWT 的一次性條目與多條 echo/curl 殘渣，收斂為通用 wildcard。
+  · `.claude/agents/*`, `.claude/settings.json`, `.claude/settings.local.json`, `CLAUDE.md`, `docs/{TROUBLESHOOTING.md,changelog-2026-07.md,references/}`, `.github/workflows/ci.yml`, 刪 `.claudecode/`
 - 2026-08-14 · [實機白屏根因修復：啟動期主執行緒卡死 + HTTP 無 timeout] ·
   - 症狀：實機白屏但 Dart log 持續輸出；`_getCurrentLocation` 無任何分支 log、`getUserTrips` 與 WebSocket 也無完成 log。
   - 根因：`passenger_home_page.initState` 第一行就呼叫 `Geolocator.isLocationServiceEnabled()`——iOS 上它在主執行緒執行且可能長時間無回應（Apple 文件明載），第一幀因此永遠畫不出來（白屏＝iOS 啟動畫面），系統權限對話框也跳不出。
@@ -218,114 +232,6 @@
 - 2026-08-13 · [任務1 主題式 commit ✅] · 2026-07-12〜08-10 全部加固成果（80+ 修改、20+ 刪除、90+ 新檔）拆成 7 個主題 commit（chore 產物清理 / fix(contracts) / fix(backend) / feat(backend) / feat(mobile) / feat(dashboard) / docs），僅 commit 未 push。提交前驗證：`sui move build` 綠燈、`sui move test` **19/19 PASS**、後端 128 個 `.py` 全 py_compile 通過、秘密掃描無命中（`.env`/`*.local.dart` 均未入庫；`.DS_Store`、`mobile/.dart_tool/` 等已 `git rm --cached` 停止追蹤）。備註：`refund_service_v2._try_blockchain_refund`（create 路徑）仍會產生標記為 `pending_signature` 的 sha256 佔位 hash 回傳給呼叫端，雖未冒充成功但建議後續改為回傳待簽參數。 · 全 repo
 - 2026-08-10 · [CLAUDE.md 過期 package id 更新（P3）] · 把 CLAUDE.md「關鍵事實」的 package 由過期 `0xa6232c…790380b` 改為現行加固版 `0xb761c6f5…e23f`（與 `.env` CONTRACT_PACKAGE_ID 一致），並註明舊值與 `Published.toml` 已過期勿引用。`Published.toml`（sui move 產生檔）待下次部署自動更新。檔案：`CLAUDE.md`, `docs/USER_ACTION_ITEMS.md`
   - 註：本輪 Bash 工具因 `/login` 後 CLI 進入需重裝狀態而失效，無法做 RPC 上鏈物件驗證；改做純文件工作。使用者需 `node node_modules/@anthropic-ai/claude-code/install.cjs` 或重開 session 修復。
-- 2026-07-29 · [啟動閃退根因修復：Firebase 佔位符 API key] ·
-  - 症狀：模擬器 build 成功但一啟動就 SIGABRT，Dart 無任何 log。
-  - 根因（用 `~/Library/Logs/DiagnosticReports/Runner-*.ips` 崩潰報告定位）：`+[FIRInstallations validateAPIKey:]` 對格式不符的 key 丟**原生 NSException** → SIGABRT。`firebase_options.dart` 與 `GoogleService-Info.plist` 的 key 皆為佔位符 `YOUR_FIREBASE_API_KEY`（先前「移除已提交金鑰」commit 洗掉的）。原生例外 Dart try/catch 攔不到，故在 main() 印任何東西前就死。**非本次改動造成**。
-  - 修法：`main.dart` 在呼叫 `Firebase.initializeApp` 前先檢查 `apiKey.startsWith('AIza')`，佔位符則跳過初始化（app 照常啟動，暫無 FCM 推播）。另在 main() 加 `FlutterError.onError` + 全域 try/catch 讓未來啟動例外會印出而非靜默閃退。
-  - 驗證：`flutter run` 於 iPhone 16 Plus 模擬器**成功啟動**（Dart 執行、WebSocket 初始化、抓到 SUI 價格、自動以舊 session 登入）。殘留無害警告 `發送 FCM Token 失敗 [core/no-app]`（因跳過 Firebase，預期行為）。
-  - 待使用者：要啟用推播 → 從 Firebase Console 下載真實 `GoogleService-Info.plist` + `flutterfire configure`（已補進 USER_ACTION_ITEMS）。
-  - 檔案：`mobile/lib/main.dart`
-- 2026-07-29 · [iOS build 修復 + zkLogin nonce 修正] ·
-  - **build 阻擋錯誤**：`refund_service.dart` multipart 上傳把 `client.send()`（回 `StreamedResponse`）塞進只吃 `Future<Response>` 的 `_httpClient.executeRequest` → 型別不符。改用 `request.send()`（BaseRequest 自管 client）再 `Response.fromStream`。此為既有潛在 bug，Phase 7 把 RefundService 接進活樹後才被編譯到。（其餘 `SFAuthenticationSession`/`openURL` 全是 flutter_appauth iOS 端的 deprecation 警告，無害。）
-  - **zkLogin nonce 正確性**：驗證 flutter_appauth 7.0.1 API 時發現有專用 `nonce:` 參數；原本用 `additionalParameters:{'nonce':…}` 可能被 AppAuth 自動產生的 nonce 覆蓋 → id_token 的 nonce 與 Enoki 不符 → 位址推導失敗。改用專用 `nonce:` 參數。
-  - 另核對 `ed25519_edwards`/`pointycastle`/`flutter_appauth` 全部 API 與我的用法一致（generateKey/public/newKeyFromSeed/sign/.bytes、Blake2bDigest(digestSize:)/update/doFinal、authorizeAndExchangeCode/AuthorizationTokenRequest/idToken）。
-  - 檔案：`mobile/lib/services/refund_service.dart`, `mobile/lib/services/zklogin_service.dart`
-- 2026-07-29 · [Phase 9 假 ZKP proof 清除] ·
-  - `did_service.dart`：移除 `generateAgeProof`/`generateLicenseProof`/`generateCommitment`——以 `sha256(did:isValid:timestamp)` 產出**可任意偽造的假 proof**（無零知識、無密碼學保證），且經查**零呼叫端**（dialog 實走 `generateAndVerifyAge/License` → 後端 `/identity/generate-*-proof`）。連帶移除變成死碼的 `dart:convert`、`package:crypto` import。
-  - `zkp_service.dart` 查核為**真實後端呼叫**（`/zkp/generate-*-proof`），非假 proof，保留不動。
-  - 真實方法（`generateAndVerifyAge/License`）與其 dialog 呼叫端未受影響。
-  - 檔案：`mobile/lib/services/did_service.dart`
-- 2026-07-29 · [Phase 9 舊付款死碼清除 + 使用者待辦單一清單] ·
-  - 確認實際付款路徑：`passenger_home → PaymentPage → showOneClickPaymentDialog`（＝我 Phase 4 zkLogin 接的那個，在活路徑上✓）。舊 `payment_dialog.dart` 僅被 import、`showPaymentDialog` 從未被呼叫＝死碼（含零地址司機路徑）。
-  - 刪 `mobile/lib/widgets/payment_dialog.dart`（零地址）+ `mobile/lib/services/sui_contract_service.dart`（僅被前者使用、且含過期 package `0xda64…`）；移除 `payment_page.dart` 的死 import。`sui_wallet_service` 仍被 `wallet_setup_page`（活）使用 → 保留。刪後無殘留引用。
-  - **新增 `docs/USER_ACTION_ITEMS.md`**：把「需使用者本人操作」的事集中成單一清單（Enoki 贊助設定、Google consent、領測試幣、Maps key 限制、本機驗證、Published.toml/CLAUDE.md 過期 package）。之後使用者待辦都寫在此檔。
-  - 檔案：刪 `mobile/lib/widgets/payment_dialog.dart`、`mobile/lib/services/sui_contract_service.dart`；改 `mobile/lib/payment_page.dart`；新 `docs/USER_ACTION_ITEMS.md`
-- 2026-07-25 · [Phase 5 委託 + Phase 6 爭議 非託管簽名 scaffold（備置）] ·
-  - 沿用 Phase 4 的 Enoki 贊助機制（這兩個動作不涉及 Coin，較單純）。
-  - 後端：`zklogin_tx_service.py`（`issue_operator_cap`：agent=平台、額度/時效/動作白名單 RELEASE|REFUND、帶 Clock 0x6；`raise_dispute`：escrow shared obj + reason vector<u8>）；`api/v1/zklogin_actions.py`（`/agent/zklogin/delegate/{prepare,execute}`、`/disputes/zklogin/{prepare,execute}`，user 取自 JWT）。py_compile 通過、4 路由已註冊。
-  - 前端：`ApiService` 加 delegate/dispute prepare+execute；`zklogin_action_service.dart`（共用 prepare→簽→execute 編排）；`delegation_page._authorize` 接真實 delegate（預設 1 SUI/筆、5 SUI/日、30 天、放款+退款）→ recordDelegation；`trip_in_progress_page` 加「回報爭議」按鈕 + `_raiseDispute`（簽 raise_dispute → 凍結 → reportDisputeObject → UI 轉 disputed）。
-  - 待驗證同 Phase 4（Enoki sponsor 設定 + 實機簽名格式）。
-  - 檔案：`backend/app/services/zklogin_tx_service.py`(新), `backend/app/api/v1/zklogin_actions.py`(新), `backend/app/main.py`, `mobile/lib/services/{api_service,zklogin_action_service}.dart`, `mobile/lib/pages/{delegation_page,trip_in_progress_page}.dart`
-- 2026-07-24 · [Phase 4 非託管付款 scaffold（備置，待實機+Enoki portal 驗證）] ·
-  - 架構決策：pysui 0.65 無 zkLogin 簽名組裝 → 採 Enoki 贊助交易（Enoki 組 zkLogin 簽名+送鏈）。
-  - 後端：`payment_zklogin_service.py`（挑乘客 coin → pysui split_coin+move_call lock_payment → serialize kind bytes → Enoki sponsor → execute → 解析 escrow id）；`api/v1/payments_zklogin.py`（`POST /payments/zklogin/prepare`、`/execute`，passenger 取自 app JWT 不由前端傳）。py_compile 通過、路由已註冊、backend healthy。
-  - 前端：`zklogin_service.signSuiTransactionBytes`（blake2b256(intent ++ bytes) + flag||sig||pubkey，加 pointycastle）；`zklogin_payment_service.dart`（prepare→sign→execute 編排）；`ApiService.preparePayment/executePayment`；`one_click_payment_dialog` 改走 zkLogin 為主、operator 代簽為後備，**移除偽造 hash 的 mock fallback**（遵守 CLAUDE.md，失敗即拋錯）。
-  - ⚠️ 未驗證（需你）：Enoki portal 需設 **sponsor 資金 + allowedMoveCallTargets**；pysui `serialize()` 產出的 kind bytes、Enoki execute 接受「臨時簽名 vs 已組裝 zkLogin 簽名」需以真實 JWT + 已領測試幣的 zkLogin 位址實機測。
-  - 檔案：`backend/app/services/payment_zklogin_service.py`(新), `backend/app/api/v1/payments_zklogin.py`(新), `backend/app/main.py`, `mobile/lib/services/{zklogin_service,zklogin_payment_service}.dart`, `mobile/lib/services/api_service.dart`, `mobile/lib/widgets/one_click_payment_dialog.dart`, `mobile/pubspec.yaml`
-- 2026-07-24 · [後端 directions 韌性 + Phase 9 死碼刪除] ·
-  - 後端 `directions_service.py`：支援選填 `BACKEND_GOOGLE_MAPS_API_KEY`（伺服器 IP 限制專用，未設則沿用 `GOOGLE_MAPS_API_KEY`）；`REQUEST_DENIED` 改為「只警告一次」並說明成因（前端 key 若為 iOS 限制，後端會被拒），避免每次請求洗版 error。直線 fallback 原本就有，功能不受影響。py_compile 通過、backend healthy。
-  - 刪除 3 個經精確查證無引用的死碼檔：`services/old_iota_wallet_service.dart`（IOTA 遺留，CLAUDE.md 已載明 IOTA 為死碼）、`services/wallet_connect_service.dart`（import 已從 pubspec 移除的 `walletconnect_flutter_v2`，屬 build 地雷）、`driver_home_page.dart`（587 行舊版，`/driver` 已改用 `DriverHomePageNew`）。皆確認無敏感金鑰、刪後無殘留引用。
-  - 保留仍在路由使用的 `payment_page`/`wallet_setup_page`/`sui_*_service`（待 Phase 4 zkLogin 付款上線再處理）。
-  - 檔案：`backend/app/services/directions_service.py`, `.env`(選填註解), 刪 `mobile/lib/services/old_iota_wallet_service.dart`, `mobile/lib/services/wallet_connect_service.dart`, `mobile/lib/driver_home_page.dart`
-- 2026-07-24 · [Google Maps 金鑰輪替（存本地）+ iOS App 限制相容 header] ·
-  - 新 key 只寫入 gitignored 檔（`google_maps_config.local.dart` + `.env`），四道防外洩檢查全過（tracked/staged/untracked 皆 0 命中）。舊失效 key 已換掉。
-  - 新 key 為「有效但有 iOS App 限制」。因本專案以 http 直打 REST（非原生 SDK），預設不帶 bundle id → 會被 GCP 拒。於 `GoogleMapsConfig` 加 `iosBundleId` + `restrictionHeaders`（`X-Ios-Bundle-Identifier: com.example.projectDapp`），並補進全部 6 個 Google 呼叫點：Directions、Places(autocomplete/details/geocode)、Street View(metadata + Image.network)。
-  - 注意：此 header 可被偽造，僅屬弱防護；真正防線是 API 限制 + 配額。後端 `directions_service.py` 由伺服器 IP 呼叫、不帶此 header，若 key 為 iOS 限制則後端該呼叫會被拒（現有直線 fallback 可承接），如需後端正常應另配 IP 限制的 key。
-  - 檔案：`mobile/lib/config/google_maps_config.dart`, `mobile/lib/services/google_directions_service.dart`, `mobile/lib/services/google_places_service.dart`, `mobile/lib/widgets/street_view_image.dart`
-- 2026-07-24 · [Phase 9 部分：Google Maps 金鑰單一來源 + 洩漏金鑰移除] ·
-  - 診斷：`.env` 與程式內的 Google Maps key `AIzaSyB0mx…` 已失效（Directions/Geocoding 實測 `REQUEST_DENIED: API key is invalid`）——與先前「remove committed Google API keys」commit 吻合，key 應已在 GCP 撤銷。
-  - `google_directions_service.dart` 原本**硬編碼**該金鑰（tracked 檔＝已洩漏），改為 `GoogleMapsConfig.apiKey` 單一來源。`google_places_service.dart` 本就用 config。自此所有 Google API 消費者（Directions＋Places）只讀 `google_maps_config.local.dart`（gitignored）一處。
-  - 失效影響：路線繪製（Directions）＋地址自動完成（Places）失效；地圖圖磚走 OSM(flutter_map) 不受影響。使用者需在 GCP 建新 key（啟用 Directions/Places API）填入 `google_maps_config.local.dart`。
-  - ⚠️ **重要修正**：Phase 9 原列為死碼的 `payment_page`/`wallet_setup_page`/`sui_contract_service`/`sui_wallet_service` 經查**仍被路由使用**（`/payment`、`/wallet/setup`、passenger_home/order_center），是**現行**付款流程。應待 Phase 4 zkLogin 付款上線後才移除，現在刪會使 app 無付款路徑。故本輪不刪。
-  - 檔案：`mobile/lib/services/google_directions_service.dart`
-- 2026-07-24 · [Phase 7 退款 UI 整併完成 + Enoki provider 驗證] ·
-  - **Enoki Google provider 已生效**（實測 `/v1/app` 回傳 `providerType: google` + 相符 client id）；zkLogin 伺服端關卡全部就緒，待本機 flutter run 實測登入。
-  - **退款單一路徑**：盤點發現 `lib/pages/trip_history_page.dart`（698 行）為 orphan（無人 import），實際使用的是 root `lib/trip_history_page.dart`（514 行，被 main/兩個 home/driver 頁引用）。將 active 頁退款由 `ApiService.createRefundRequest`（form-urlencoded）改走 `RefundService.createRefundRequest`（multipart，支援佐證檔）並加 token 守衛；刪除 orphan 頁；移除 `ApiService.createRefundRequest` 重複方法。退款自此單一路徑。
-  - 檔案：`mobile/lib/trip_history_page.dart`, `mobile/lib/services/api_service.dart`, 刪 `mobile/lib/pages/trip_history_page.dart`
-- 2026-07-24 · [Phase 3 狀態機 UI 完成] · `trip_in_progress_page`。
-  - 兩個 inline 狀態 Container 改用設計系統 `StatusPill.trip(_status)` / `StatusPill.payment(...)`；支付狀態優先讀後端 `payment_status` enum，缺則以 escrow 回推。
-  - 按鈕 switch 補 `disputed`（爭議凍結、停用動作、AppColors.warning）/`completed`/`cancelled` 分支（原本 completed 誤落 default「未知狀態」）；爭議中隱藏「取消行程」（escrow 已凍結）。
-  - 移除已無用的 `_getStatusText`/`_getStatusColor`（disputed 顯示由 StatusPill 提供）。
-  - 檔案：`mobile/lib/pages/trip_in_progress_page.dart`
-- 2026-07-24 · [zkLogin iOS 原生設定 + Phase 9 packageId 統一] ·
-  - **packageId 統一**：RPC 查證三個散落 package，只有 `0xb761c6f5…e23f` 具 dispute 函式（加固版）。於 `mobile/lib/config/app_config.dart` 設 `contractPackageId`/`platformAddress` 為單一事實來源；舊 `0xa6232c…380b`/`0xda64…542f` 標為死值。⚠️ `contracts/Published.toml`＋`CLAUDE.md` 仍指向過期 package，待更新。
-  - **iOS OAuth 回跳**：`ios/Runner/Info.plist` 加 google-oauth 的 `CFBundleURLScheme`（佔位待填反向 client id）。專案只含 ios+web（無 android）。
-  - **設定清單**：新增 `docs/ZKLOGIN_SETUP.md`（Google Cloud + Enoki + 4 處填值 + 驗證步驟）。Bundle ID = `com.example.projectDapp`。
-  - 檔案：`mobile/lib/config/app_config.dart`, `mobile/ios/Runner/Info.plist`, `docs/ZKLOGIN_SETUP.md`
-- 2026-07-18 · [Phase 0 zkLogin 地基打通 ✅（spike 去風險完成）] · Enoki public key 已接。
-  - **Phase 0a spike 成功**：真實臨時 ed25519 金鑰 → Enoki nonce 端到端回傳有效 nonce/randomness/maxEpoch（直打 Enoki 200 + 後端 proxy `/auth/zklogin/nonce` 200）。技術可行性確認，zkLogin 路線成立。
-  - **0b 後端**：`ENOKI_API_KEY`（public key）寫入 `.env`，backend 容器 recreate 載入成功；nonce 端點由 503→200。
-  - **0c Flutter**：新增 `services/zklogin_service.dart`（產臨時金鑰→nonce→AppAuth Google OAuth 注入 nonce→backend login→UserSession；含 `signDigest` 供 Phase 4/5/6）；`login_page.dart` 加「用 Google 登入（免助記詞）」按鈕+handler；`pubspec.yaml` 加 `flutter_appauth`/`ed25519_edwards`；`app_config.dart`(+local) 加 `googleOAuthClientId`/`redirectUrl`。
-  - **唯一剩餘卡點**：需在 Google Cloud 建 OAuth Client、並在 Enoki Portal 把該 client id 註冊為 Google Auth Provider（目前 `authenticationProviders: []`），再填 `GOOGLE_OAUTH_CLIENT_ID`（.env）+ Flutter `localGoogleOAuthClientId`/`RedirectUrl`。填好即端到端可登入。
-  - 檔案：`.env`, `mobile/lib/services/zklogin_service.dart`(新), `mobile/lib/login_page.dart`, `mobile/lib/config/app_config{,.local}.dart`, `mobile/pubspec.yaml`
-- 2026-07-16 · [前端 Phase 3 + 5 UI（Flutter，待本機 build 驗證）] · 狀態機 + 委託 UI。
-  - Phase 3：`trip_in_progress_page` 加 `in_progress` 分支（`_updateTripStatus` 呼叫 `startTrip`）；司機 `picked_up` 按鈕改為「開始行程」→ in_progress，`in_progress` 才是「完成行程並收款」（讓 in_progress 真正被使用）。
-  - Phase 5：新增 `pages/delegation_page.dart`（委託狀態查詢 + 撤銷已可運作；「授權」為 zkLogin 簽名整合點）+ `/delegation` 路由。
-  - 檔案：`mobile/lib/pages/{trip_in_progress_page,delegation_page}.dart`, `mobile/lib/main.dart`
-- 2026-07-16 · [前端 Phase 1 + 2（Flutter，待本機 build 驗證）] · **設計系統 + API 擴充**。
-  - Phase 1：新增 `mobile/lib/theme/app_theme.dart`（`AppColors` + `AppTheme.dark()` 集中主題 + `StatusPill` 狀態徽章，含 payment/trip 工廠建構子）；`main.dart` 改用 `AppTheme.dark()` 取代 inline ThemeData。
-  - Phase 2：`api_service.dart` 加 zkLogin（nonce/login/zkp）、`startTrip`、`raiseDispute`/`reportDisputeObject`、`recordDelegation`/`getDelegation`/`revokeDelegation`；`refund_service.dart` 硬編碼 IP 改用 `AppConfig.backendUrl`。
-  - ⚠️ 此環境無 Flutter，未 build；需使用者本機 `flutter build` 驗證。
-  - 檔案：`mobile/lib/theme/app_theme.dart`(新), `mobile/lib/main.dart`, `mobile/lib/services/{api_service,refund_service}.dart`
-- 2026-07-16 · [前端 Phase 0b + 8] · **zkLogin 後端基礎 + Dashboard admin**。
-  - Phase 0b（後端 zkLogin，Enoki）：新增 `zklogin_service.py`（封裝 Enoki nonce/位址/ZKP/贊助/送鏈）+ `/api/v1/auth/zklogin/{nonce,login,zkp}`（`login` 以 zkLogin 位址 upsert 使用者、發 app JWT，無私鑰）；config 加 `ENOKI_*`。live backend 註冊、fail-safe（無 key 回 503）驗證通過。**需使用者提供 Enoki API key + Google OAuth client 才能上線。**
-  - Phase 8（React dashboard）：新增**爭議仲裁**頁（列 disputed 行程 → `/trips/{id}/resolve-dispute` ruling 判司機/退乘客）；`RefundManagement` 加**鏈上退款核准/拒絕**（`/refunds/{id}/approve|reject`，真 admin_refund_from_pool）；`api.js` 加 `/api/v1` 實例 + `disputeAPI`/`refundChainAPI`；路由 `/disputes` + Header 導覽。**`npm run build` 成功（2274 modules）。**
-  - 檔案：`backend/app/services/zklogin_service.py`(新), `backend/app/api/v1/auth.py`, `backend/app/{config,main}.py`, `dashboard/src/pages/DisputeManagement.jsx`(新), `dashboard/src/services/api.js`, `dashboard/src/App.jsx`, `dashboard/src/components/Header.jsx`, `dashboard/src/pages/RefundManagement.jsx`
-
-- 2026-07-14 · [Phase 5 收尾] · **狀態機四項收尾（問題 5/7/8/9）**。問題 7：新增 `start_trip` + `PUT /trips/{id}/start`（picked_up→in_progress，讓死狀態被真正使用）。問題 5：`/escrow-payment` 模擬分支收斂到僅 `MOCK_MODE`；正式路徑改回傳乘客要簽的真實 `lock_payment` 參數。問題 9：主流程統一為非託管（乘客自簽 lock），`payment_proxy /process-payment` 標為後備。問題 8：新增 `PaymentStatus` enum（pending/locked/released/refunded/failed），把 `confirmed`/`completed` 收斂為 `locked`。全 py_compile 通過、live backend 熱重載註冊 /start 無錯。**狀態機修復計畫 9 個問題全數完成。** · `backend/app/services/trip_service.py`, `backend/app/api/v1/{trips,payment_proxy}.py`, `backend/app/schemas/trip.py`, `backend/app/models/ride.py`
-- 2026-07-14 · [Phase 2c+3 + bug] · **取消退款/完成放款接上 Agent 委託**。`trip_service.complete_trip` 放款、`cancel_trip` 退款/放款一律優先走 `agent_service.*_via_agent`（用 `delegation_service.get_active_cap` 取乘客 OperatorCap），無委託才退回舊路徑；**停止吞例外**，失敗以 error 記錄並反映到 `payment_status`。修復 `auto_upgrade_waiting_trips` 的時區 bug（naive `utcnow()` 減 tz-aware `requested_at`）→ 改 tz-aware 並補正 naive，live log 確認 0 錯誤、任務正常升級。 · `backend/app/services/trip_service.py`
-- 2026-07-14 · [Phase 4b + Phase 1 + 環境] · **爭議後端 + Agent 委託基礎 + 整體 stack 接上**。
-  - Phase 4b：`TripStatus.DISPUTED`、`migrations/006`、`dispute_service.py`、`POST /trips/{id}/dispute`·`/dispute/report`·`/resolve-dispute`（admin）。鏈上確認 `raise_dispute`/`resolve_dispute` 已部署。
-  - Phase 1：`OperatorDelegation` 模型 + `migrations/005` + `delegation_service.py`（上鏈驗證 cap 屬平台 agent、解析額度/時效）+ `POST/GET/DELETE /agent/delegation`。**實測**：鏈上簽發 OperatorCap，欄位與服務解析一致。
-  - Bug 修復：`sui_client` 改用 `SuiConfig.user_config`（原本 `SuiConfig.testnet()` 在 pysui 0.65 不存在，導致啟動報錯）→ log 顯示初始化成功。
-  - 環境：Docker 全開；DB 套用 migration 003/004/005/006；backend `up -d --force-recreate` 讀到新 `.env`（新 package `0xb761c6f5…`/pool/ArbiterCap），熱重載載入所有新端點，`Application startup complete` 無錯。
-  - 待辦：行動端用戶用 Slush 簽 `issue_operator_cap` 並回報 cap id（需 Flutter）；`trip_service` 自動升級的時區 bug（既有，非本次）。
-  - 檔案：`backend/app/{models/delegation.py, services/{dispute_service,delegation_service}.py, api/v1/{agent.py, trips.py}, schemas/trip.py, models/ride.py, models/__init__.py, main.py, services/sui_client.py, config.py}`, `backend/migrations/00{5,6}_*.sql`
-- 2026-07-14 · [狀態機修復 P2a/2b/4] · **退款串接 + 鏈上爭議仲裁**。合約：`refund_module_v2` 加 `admin_refund_from_pool`（平台以 RefundCapability 直接退款，免 per-request 物件）；`payment_escrow` 加 `disputed` 凍結欄位 + `ArbiterCap` + `raise_dispute`/`resolve_dispute`（判司機 release／退乘客 refund）。後端：`RefundServiceV2` 補 `approve_and_execute_refund`/`reject_refund`（修 AttributeError + 真上鏈）；`sui_service` 加 `call_contract_admin_refund`/`call_contract_resolve_dispute`。`sui move test` **19/19 PASS**。**重新部署 testnet**（新 package `0xb761c6f5…7e23f`，已回填 `.env`），並**端到端驗證**：注資退款池 0.2 SUI → admin 退款 0.05 SUI 成功（池餘額/total_refunded 鏈上確認）。新增 `scripts/ops/fund_refund_pool.sh`。 · `contracts/sources/financial/{refund_module_v2,payment_escrow}.move`, `backend/app/services/{refund_service_v2,sui_service}.py`, `.env`, `scripts/ops/`
-- 2026-07-14 · [deploy] · **強化後合約部署上 testnet**。新 package `0x9d46bb749625bfe72d84055296ec3958974f049b91878d1e790361205144065e`（取代舊 `0xa6232c…`）。已回填 `.env`：package/UserRegistry/VehicleRegistry/DIDRegistry/CredentialRegistry/TrustedIssuers/RefundPool + 平台 cap（CredentialAdminCap/RefundCapability/RatingAdminCap）。鏈上驗證：package 存在、CredentialRegistry 為 Shared 物件（init 已執行）。RPC 改用 `sui-testnet-rpc.publicnode.com`（`fullnode.testnet.sui.io` 從本環境回 404）。 · `.env`
 
 > 格式：`YYYY-MM-DD · [工作包代號] · 摘要 · 影響檔案`。最新在上。
-
-- 2026-07-12 · [docs] · 更新專案面向文件至現況：`README.md`（改 ChainSUI/Agentic Web，補 Agent 委託/Walrus/ZKP/安全測試/部署腳本）、`PROJECT_OVERVIEW.md`（修正合約模組清單、環境變數、狀態）、根 `.env.example`（補 Sui/Agent/Walrus 必填變數）。 · `README.md`, `PROJECT_OVERVIEW.md`, `.env.example`
-- 2026-07-12 · [F1] · **PTB 複合原子結算**。新增 `payment_escrow::release_and_receipt_by_agent`：Agent 一次交易同時釋放託管給司機/平台並開立行程收據給乘客（原子性 + 省 gas）；`trip_receipt::create_receipt_for` 抽出供跨模組複合呼叫。新增測試 `test_agent_settle_and_receipt_atomic`。`sui move test` = 13/13 PASS。 · `contracts/sources/financial/payment_escrow.move`, `contracts/sources/business/trip_receipt.move`, `contracts/tests/security_tests.move`
-- 2026-07-12 · [G1-擴充] · Move 安全測試由 9 增至 **12（全 PASS）**：新增 Agent 動作白名單（release 用 refund-only cap 被拒）、cap 時效（過期後拒）、DID 內嵌位址與 controller 不符被拒。 · `contracts/tests/security_tests.move`
-- 2026-07-12 · [ops] · 部署與環境輔助：重寫 `backend/.env.example`（對齊新 `config.py`：Sui/Walrus/CORS/fail-fast 機密，移除 IOTA 殘留）；新增 `scripts/ops/deploy_and_init.sh`（一鍵發布合約並擷取 registry/pool/cap 的 object ID）。 · `backend/.env.example`, `scripts/ops/deploy_and_init.sh`
-- 2026-07-12 · [E3-評價/退款] · **Walrus 三路徑完成**。評價：`rating_service.create_rating` 上傳標準化評論到 Walrus（內容 SHA256 == rating_hash），存 `content_blob_id`（+ `migrations/003_add_rating_content_blob.sql` + `VehicleRating.content_blob_id`）。退款佐證：`refunds.py` 由單節點 IPFS 改走 Walrus（`blob_id`→evidence_cid、內容 hash→evidence_hash），移除 ipfs_service import。全部 py_compile 通過。 · `backend/app/services/rating_service.py`, `backend/app/models/rating.py`, `backend/migrations/003_add_rating_content_blob.sql`, `backend/app/api/v1/refunds.py`
-- 2026-07-12 · [D2-核心] · **Agent 鏈上代理層**。新增 `agent_service.py`：Agent 以 `OPERATOR_PRIVATE_KEY` 簽章、持乘客 `OperatorCap` 呼叫 `payment_escrow::release_payment_by_agent`/`refund_payment_by_agent`（pysui SyncTransaction + `0x6` clock），鏡射既有 `sui_service` 寫法，鏈上失敗明確報錯。py_compile 通過。剩餘：per-user cap 發現 + 接進 `complete_trip`。 · `backend/app/services/agent_service.py`(新)
-- 2026-07-12 · [E3-軌跡] · **GPS 軌跡 → Walrus → 鏈上錨定迴圈接通**。新增 `trajectory_service.py`；`websocket/events.py` 累積每趟 GPS；`trip_service.complete_trip` 結束時上傳 Walrus 並把 blob_id+hash 傳入收據；修正 `escrow_service.create_trip_receipt` 簽名對齊新的 `create_receipt`（8 參數）。全部 py_compile 通過。 · `backend/app/services/{trajectory_service,escrow_service,trip_service}.py`, `backend/app/websocket/events.py`
-- 2026-07-12 · [F2/G1] · **死碼清理 + Move 安全測試**。刪除 7 個 0-byte 空 module source、17 個空/IOTA 舊測試檔與 `run_tests.sh`；新增 `tests/security_tests.move`（9 tests：託管乘客釋放/非授權拒絕/退款、Agent cap 有效釋放/超額拒絕/撤銷拒絕、評價綁行程成功/trip 不符拒絕、reputation 非 admin 拒絕）。`sui move test` = 9 passed / 0 failed。為測試加 `rating_proof` test-only cap 建構子。 · `contracts/tests/security_tests.move`(新), `contracts/sources/business/rating_proof.move`, 刪除多個空檔
-- 2026-07-12 · [E1/E2] · **Walrus 基礎（儲存層 + 鏈上錨定）**。新增 `walrus_service.py`（Walrus publisher/aggregator HTTP client，含重試與 content-hash 校驗）；`config.py` 加 `WALRUS_*` 設定；Move `TripReceipt` 加 `trajectory_blob_id/trajectory_hash`、`RatingProof` 加 `content_blob_id`，`create_receipt`/`create_rating_proof` 簽名同步更新，`sui move build` 綠燈。⚠️ 後端 `escrow_service.create_trip_receipt` 呼叫 `create_receipt` 的引數需在 E3 補上兩個新參數。 · `backend/app/services/walrus_service.py`(新), `backend/app/config.py`, `contracts/sources/business/{trip_receipt,rating_proof}.move`
-- 2026-07-12 · [C2-backend] · **移除所有後端可偽造的 ZKP 模擬路徑**（`zkp_prover._simulate_proof`、`zkp_verifier._simulate_verification`、`identity_service._simulate_zkp_verification` 全部刪除，缺 key/無效 proof 一律 fail-closed）。**額外發現並修復免費搭車漏洞**：`trips.py` verify-payment 的模擬付款原本任何用戶送 `0xtx...` 即標記已付款，改為只在 `MOCK_MODE` 生效。 · `backend/app/services/{zkp_prover,zkp_verifier,identity_service}.py`, `backend/app/api/v1/trips.py`
-- 2026-07-12 · [B1/B2] · **後端 P0 安全加固**。`config.py` 改 fail-fast 並移除弱預設（SECRET_KEY/DATABASE_URL/帳密不再有可用預設）；`wallet_service` salt 改 `os.urandom`；`main.py` CORS 與 Socket.IO 由 `*` 收斂為 `CORS_ALLOW_ORIGINS` 白名單；`sui_service.call_contract_release_payment` 與 `escrow_service.refund_payment` 移除「失敗即回假 hash」的偽成功；`refunds.py` approve/reject 還原 `get_current_admin` 驗證。真實鏈上交易串接留待 P1 D2。 · `backend/app/{config,main}.py`, `backend/app/services/{wallet_service,sui_service,escrow_service}.py`, `backend/app/api/v1/refunds.py`
-- 2026-07-12 · [A1–A4/C1/D1] · **P0 合約層安全修復完成，`sui move build` 綠燈**。新增 `agent/agent_registry.move`（OperatorCap 委託）；`payment_escrow` 釋放改需乘客簽章或 OperatorCap、消費刪除 Escrow、費率鏈上計算；`refund_module_v2` 刪除無授權掏空路徑；`user_registry`/`vehicle_registry` 統計改共享物件+admin 把關；`rating_proof` 評價綁定 TripReceipt+RatingAdminCap；`credential_verifier` 改 `sui::groth16` 真驗證+CredentialAdminCap；`did_registry` 位址綁定+存在檢查。相依釘 `testnet-v1.53.2`。 · `contracts/sources/{agent/agent_registry,financial/payment_escrow,financial/refund_module_v2,identity/user_registry,identity/vehicle_registry,identity/credential_verifier,identity/did_registry,business/rating_proof,business/trip_receipt}.move`, `contracts/Move.toml`
-- 2026-07-12 · [init] · 建立本路線圖與 `CLAUDE.md`；完成 P0/P1/P2 審查與規格 · `docs/PRODUCTION_HARDENING_ROADMAP.md`, `CLAUDE.md`
+> 只保留最近約一個月；更早的條目歸檔於 [`docs/changelog-2026-07.md`](changelog-2026-07.md)（歸檔時同步搬移，勿在兩處重複記錄）。
