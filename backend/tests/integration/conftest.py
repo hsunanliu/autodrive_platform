@@ -31,7 +31,11 @@ class FakeResult:
         return self._value
 
     def scalars(self):
-        return SimpleNamespace(all=lambda: list(self._many))
+        many = list(self._many)
+        return SimpleNamespace(
+            all=lambda: list(many),
+            first=lambda: (many[0] if many else None),
+        )
 
 
 class FakeSession:
@@ -42,6 +46,7 @@ class FakeSession:
         self.commits = 0
         self.rollbacks = 0
         self.added = []
+        self._next_id = 1
 
     async def execute(self, *_args, **_kwargs):
         if not self.results:
@@ -57,8 +62,15 @@ class FakeSession:
     async def rollback(self):
         self.rollbacks += 1
 
-    async def refresh(self, _obj):
-        pass
+    async def refresh(self, obj):
+        # 模擬 DB flush 後回填自增主鍵：讓 record.id 從 None 變成有值，
+        # 使 agent_brain._record 之後能取用 record.id（decision_id）。
+        if getattr(obj, "id", None) is None:
+            try:
+                obj.id = self._next_id
+                self._next_id += 1
+            except (AttributeError, TypeError):
+                pass
 
 
 @pytest.fixture

@@ -13,6 +13,7 @@ from .credential import UserCredential, CredentialType, CredentialStatus
 from .rating import VehicleRating, RatingTag
 from .reputation import ReputationScore, ReputationHistory, UserBan
 from .delegation import OperatorDelegation
+from .agent_decision import AgentDecisionRecord
 
 # 確保所有模型都被導入，這樣 Base.metadata 才能找到它們
 __all__ = [

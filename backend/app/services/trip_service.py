@@ -506,13 +506,41 @@ class TripService:
         from app.services.delegation_service import DelegationService
         from app.services.agent_service import agent_service
         passenger_cap = await DelegationService(self.db).get_active_cap(passenger.id)
+
+        deferred_settlement = False  # 大額待乘客確認時為 True：行程照常完成，暫不放款
+        release_result = None
         if passenger_cap and trip.escrow_object_id:
-            logger.info(f"🤖 走 Agent 委託放款（cap={passenger_cap[:12]}…）")
-            release_result = await agent_service.release_escrow_via_agent(
-                escrow_object_id=trip.escrow_object_id,
-                operator_cap_id=passenger_cap,
-                trip_id=trip.trip_id,
+            # 先問 Agent 決策層（AGENT_LLM_ENABLED 時）：小額自動代發、大額存 pending 待確認。
+            # 未啟用時 handled=False，完全走下方現行 Agent 代發路徑（行為與導入前相同）。
+            from app.services.agent_brain import agent_brain, SettlementContext
+            brain_outcome = await agent_brain.settle_trip(
+                self.db,
+                SettlementContext(
+                    trip_id=trip.trip_id,
+                    user_id=passenger.id,
+                    rule_action="release",
+                    amount_mist=int(fare_breakdown.total_amount),
+                    escrow_object_id=trip.escrow_object_id,
+                    operator_cap_id=passenger_cap,
+                    distance_km=trip.distance_km,
+                    estimated_minutes=trip.estimated_duration_minutes,
+                    actual_minutes=actual_duration,
+                ),
             )
+            if brain_outcome.get("handled"):
+                if brain_outcome.get("deferred"):
+                    deferred_settlement = True
+                    trip.payment_status = brain_outcome.get("payment_status", "pending_confirmation")
+                    logger.info(f"🤖 大額結算待乘客確認 trip {trip_id}，行程完成但暫不放款")
+                else:
+                    release_result = brain_outcome.get("result")
+            else:
+                logger.info(f"🤖 走 Agent 委託放款（cap={passenger_cap[:12]}…）")
+                release_result = await agent_service.release_escrow_via_agent(
+                    escrow_object_id=trip.escrow_object_id,
+                    operator_cap_id=passenger_cap,
+                    trip_id=trip.trip_id,
+                )
         else:
             release_result = await self.escrow_service.release_payment(
                 escrow_object_id=trip.escrow_object_id,
@@ -521,13 +549,15 @@ class TripService:
                 amount_mist=driver_earnings_mist
             )
 
-        if not release_result.get("success"):
-            error_msg = release_result.get('error', '未知錯誤')
-            logger.error(f"❌ 支付釋放失敗: {error_msg}")
-            raise Exception(f"支付釋放失敗: {error_msg}")
-        
-        blockchain_tx_id = release_result.get("transaction_hash")
-        logger.info(f"✅ 支付已成功釋放給司機，交易Hash: {blockchain_tx_id}")
+        if deferred_settlement:
+            blockchain_tx_id = None
+        else:
+            if not release_result.get("success"):
+                error_msg = release_result.get('error', '未知錯誤')
+                logger.error(f"❌ 支付釋放失敗: {error_msg}")
+                raise Exception(f"支付釋放失敗: {error_msg}")
+            blockchain_tx_id = release_result.get("transaction_hash")
+            logger.info(f"✅ 支付已成功釋放給司機，交易Hash: {blockchain_tx_id}")
         
         # 更新行程狀態
         trip.status = TripStatus.COMPLETED
@@ -599,8 +629,8 @@ class TripService:
         return {
             "trip": await self._build_trip_response(trip, fare_breakdown),
             "payment": {
-                "transaction_hash": release_result["transaction_hash"],
-                "status": "released",
+                "transaction_hash": None if deferred_settlement else release_result["transaction_hash"],
+                "status": "pending_confirmation" if deferred_settlement else "released",
                 "driver_amount": fare_breakdown.driver_amount,
                 "platform_fee": fare_breakdown.platform_fee
             },
@@ -643,31 +673,67 @@ class TripService:
             from app.services.delegation_service import DelegationService
             from app.services.agent_service import agent_service
             passenger_cap = await DelegationService(self.db).get_active_cap(trip.user_id)
+
+            # 判定資金方向：行程已開始→放款給司機；未開始→退款給乘客
+            if trip.status in [TripStatus.PICKED_UP, TripStatus.IN_PROGRESS]:
+                rule_action = "release"
+            elif trip.status in [TripStatus.ACCEPTED]:
+                rule_action = "refund"
+            else:
+                rule_action = None
+
+            amount_mist = int(round((trip.total_amount or 0) * 1_000_000_000))
+
             try:
-                # 情況 1: 行程已開始 (picked_up, in_progress) - 放款給司機（乘客 cap 授權 release），不退款
-                if trip.status in [TripStatus.PICKED_UP, TripStatus.IN_PROGRESS]:
-                    if passenger_cap:
-                        payment_result = await agent_service.release_escrow_via_agent(
-                            escrow_object_id=trip.escrow_object_id,
-                            operator_cap_id=passenger_cap,
+                # 先問 Agent 決策層（啟用且金額可判定時）：小額自動、大額 pending。
+                brain_handled = False
+                if rule_action and passenger_cap and amount_mist > 0:
+                    from app.services.agent_brain import agent_brain, SettlementContext
+                    brain_outcome = await agent_brain.settle_trip(
+                        self.db,
+                        SettlementContext(
                             trip_id=trip.trip_id,
-                        )
-                    else:
-                        payment_result = {"success": False, "error": "乘客尚未授權 OperatorCap，無法代為放款"}
-                    logger.info(f"🚗 中途取消（行程已開始）→ 放款給司機: trip {trip_id}")
-
-                # 情況 2: 行程未開始 (accepted) - 退款給乘客
-                elif trip.status in [TripStatus.ACCEPTED]:
-                    if passenger_cap:
-                        payment_result = await agent_service.refund_escrow_via_agent(
+                            user_id=trip.user_id,
+                            rule_action=rule_action,
+                            amount_mist=amount_mist,
                             escrow_object_id=trip.escrow_object_id,
                             operator_cap_id=passenger_cap,
-                        )
-                    else:
-                        payment_result = {"success": False, "error": "乘客尚未授權 OperatorCap，無法代為退款"}
-                    logger.info(f"💸 取消退款（行程未開始）: trip {trip_id}, 由 {cancelled_by} 發起")
+                            distance_km=trip.distance_km,
+                            cancelled_by=cancelled_by,
+                        ),
+                    )
+                    if brain_outcome.get("handled"):
+                        brain_handled = True
+                        if brain_outcome.get("deferred"):
+                            trip.payment_status = brain_outcome.get("payment_status", "pending_confirmation")
+                            payment_result = {"success": True, "deferred": True}
+                            logger.info(f"🤖 取消結算待乘客確認 trip {trip_id}，暫不動用資金")
+                        else:
+                            payment_result = brain_outcome.get("result")
 
-                if payment_result is not None:
+                # LLM 未啟用 / 金額不可判定 → 現行 Agent 代發路徑
+                if not brain_handled:
+                    if rule_action == "release":
+                        if passenger_cap:
+                            payment_result = await agent_service.release_escrow_via_agent(
+                                escrow_object_id=trip.escrow_object_id,
+                                operator_cap_id=passenger_cap,
+                                trip_id=trip.trip_id,
+                            )
+                        else:
+                            payment_result = {"success": False, "error": "乘客尚未授權 OperatorCap，無法代為放款"}
+                        logger.info(f"🚗 中途取消（行程已開始）→ 放款給司機: trip {trip_id}")
+                    elif rule_action == "refund":
+                        if passenger_cap:
+                            payment_result = await agent_service.refund_escrow_via_agent(
+                                escrow_object_id=trip.escrow_object_id,
+                                operator_cap_id=passenger_cap,
+                            )
+                        else:
+                            payment_result = {"success": False, "error": "乘客尚未授權 OperatorCap，無法代為退款"}
+                        logger.info(f"💸 取消退款（行程未開始）: trip {trip_id}, 由 {cancelled_by} 發起")
+
+                if payment_result is not None and not payment_result.get("deferred"):
                     if payment_result.get("success"):
                         trip.blockchain_tx_id = payment_result.get("transaction_hash")
                         trip.payment_status = "refunded" if trip.status == TripStatus.ACCEPTED else "released"

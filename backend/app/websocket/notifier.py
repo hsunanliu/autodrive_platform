@@ -304,3 +304,16 @@ class WebSocketNotifier:
             data
         )
         logger.info(f"已通知車輛 {vehicle_id} 召回完成")
+
+    async def notify_agent_decision(self, user_id: int, payload: Dict[str, Any]):
+        """
+        通知乘客一則 Agent 結算決策（executed / pending / needs_review / failed）。
+
+        payload 由 agent_brain 組好，含 decision_id / trip_id / kind / action /
+        amount_mist / reason / tx_digest。pending 類前端應彈出「確認/拒絕」卡片。
+        """
+        await self.manager.emit_to_user(user_id, "agent_decision", payload)
+        logger.info(
+            "已通知乘客 %s Agent 決策：trip=%s kind=%s action=%s",
+            user_id, payload.get("trip_id"), payload.get("kind"), payload.get("action"),
+        )

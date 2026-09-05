@@ -34,6 +34,10 @@ class OperatorDelegation(Base):
     daily_limit = Column(BigInteger, nullable=True, comment="每日上限（MIST）")
     valid_until = Column(DateTime(timezone=True), nullable=True, comment="授權到期")
     allowed_actions = Column(Integer, nullable=True, comment="動作 bitmask（release=1/refund=2/rate=4/match=8）")
+    auto_threshold_mist = Column(
+        BigInteger, nullable=False, server_default="1000000000",
+        comment="Agent 自動執行門檻（MIST）：≤ 此值自動代發，> 此值需乘客確認。預設 1 SUI",
+    )
     revoked = Column(Boolean, default=False, nullable=False, comment="是否已撤銷")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

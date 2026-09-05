@@ -90,6 +90,18 @@ class Settings(BaseSettings):
     # blob 存活的 epoch 數（Walrus 以 epoch 計費存活期）
     WALRUS_EPOCHS: int = int(os.getenv("WALRUS_EPOCHS", "5"))
 
+    # Agent LLM 決策層（開源模型，OpenAI-compatible endpoint）
+    # 預設關閉：關閉時結算走既有規則路徑，行為與導入前完全相同。
+    # 本機開發可用 Ollama（LLM_BASE_URL=http://host.docker.internal:11434/v1
+    # + LLM_MODEL=qwen2.5:14b-instruct，LLM_API_KEY 任意非空值即可）。
+    AGENT_LLM_ENABLED: bool = os.getenv("AGENT_LLM_ENABLED", "false").lower() == "true"
+    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
+    LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "")
+    # LLM 呼叫逾時（秒）與重試次數；逾時或失敗一律 fallback 回規則路徑，不阻斷結算。
+    LLM_TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "10"))
+    LLM_MAX_RETRIES: int = int(os.getenv("LLM_MAX_RETRIES", "1"))
+
     @property
     def cors_allow_origins_list(self) -> list[str]:
         """把逗號分隔的 CORS 設定拆成清單。"""
@@ -111,6 +123,8 @@ class Settings(BaseSettings):
             problems.append("DATABASE_URL 未設定")
         if not self.MOCK_MODE and not self.OPERATOR_PRIVATE_KEY:
             problems.append("非 MOCK_MODE 但 OPERATOR_PRIVATE_KEY 未設定")
+        if self.AGENT_LLM_ENABLED and (not self.LLM_BASE_URL or not self.LLM_MODEL):
+            problems.append("AGENT_LLM_ENABLED=true 但 LLM_BASE_URL / LLM_MODEL 未設定")
 
         if problems:
             msg = "設定檢查失敗：" + "；".join(problems)
